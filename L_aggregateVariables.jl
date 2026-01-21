@@ -15,6 +15,7 @@ function optimal_labor_ALL(∂kV, W, p)
     lOpt_I = optimal_labor(∂kV.∂kVI, W.WI, p)
     lOpt_C = optimal_labor(∂kV.∂kVC, W.WC, p)
     lOpt_R = optimal_labor(∂kV.∂kVR, W.WR, p)
+    
     return (lOpt_S = lOpt_S, lOpt_I = lOpt_I, lOpt_C = lOpt_C, lOpt_R = lOpt_R)
 end
 
