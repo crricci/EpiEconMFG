@@ -1,7 +1,6 @@
 using Pkg; Pkg.activate(@__DIR__)
 
 using LinearAlgebra
-using SparseArrays
 using Parameters
 
 using Plots
