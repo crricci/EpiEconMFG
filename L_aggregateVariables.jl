@@ -1,7 +1,9 @@
 
 function optimal_labor(∂kV, W, p)
-    lOpt = @. max(0.0, 1.0 - (1.0 - p.θ) / (∂kV * W))
-    return lOpt
+    # If effective wage is non-positive, the agent never works.
+    # Labor is constrained to [0,1].
+    lRaw = @. ifelse(W <= 0.0, 0.0, (1.0 - (1.0 - p.θ) / (∂kV * W)))
+    return @. min(1.0, max(0.0, lRaw))
 end
 
 function optimal_labor_ALL(V, ∂V, F, w, p)
@@ -14,7 +16,9 @@ function optimal_labor_ALL(V, ∂V, F, w, p)
     LI = sum(lOpt_I .* F.ϕIt) * p.Δk  
 
     # then compute WS which depends on WI and the value functions
-    WS = p.ηS * w .+ p.β * LI .* (V.VI .- V.VS) ./ ∂V.∂kVS  
+    # Avoid dividing by the very small floor used for log-derivatives.
+    denomS = max.(∂V.∂kVS, sqrt(p.ϵDkUp))
+    WS = p.ηS * w .+ p.β * LI .* (V.VI .- V.VS) ./ denomS
     WC = p.ηC * w  # Zero for contained, useless
     WR = p.ηR * w
 

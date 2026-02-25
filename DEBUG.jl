@@ -15,7 +15,7 @@ end
 
 
 include("L_loadAll.jl")
-p = MFGEpiEcon(ω=1e-2, verbose=true)
+p = MFGEpiEcon(ω=0.1, maxitHJBvalue=3000, ωw=0.2, maxitWage=200, tolWage=1e-3, verbose=true)
 Ft = create_test_distribution(p)
 
 V = (
@@ -59,3 +59,8 @@ catch e
     println("value_iterationHJB failed: $e")
 end
  
+
+plot(p.k, Vsol.VS, label="VS", xlabel="k", ylabel="Value", title="HJB")
+plot!(p.k, Vsol.VI, label="VI")
+plot!(p.k, Vsol.VC, label="VC") 
+plot!(p.k, Vsol.VR, label="VR")
