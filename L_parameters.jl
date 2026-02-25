@@ -37,9 +37,15 @@
 
     # numerical HJB solver
     ϵDkUp::T = 1e-8          # safe derivative for V'(k)
-    ω::T = 0.2               # damping parameter value iteration HJB (0 < ω ≤ 0.5) 
+    ω::T = 1e-1               # damping parameter value iteration HJB (0 < ω ≤ 0.5) 
     tolHJBvalue::T = 1e-6    # convergence tolerance for value iteration HJB
     maxitHJBvalue::Int = Int(1e4)   # maximum number of iterations for value iteration HJB
+    w_start::T = 15.0          # initial guess for wage in fixed point iteration
+
+    # outer fixed point (general equilibrium wage)
+    ωw::T = 5e-2               # damping for wage updates
+    tolWage::T = 1e-6          # convergence tolerance for wage fixed point
+    maxitWage::Int = 50        # maximum iterations for wage fixed point
     
     
     # general
@@ -48,9 +54,11 @@
 end
 
 function wage(K, L, p)
-    return p.A * p.α * (K .^ (p.α - 1)) .* (L .^ (1 - p.α))
+    Ls = max(L, p.ϵDkUp)
+    return (1-p.α) * p.A * K.^p.α  .* Ls.^(-p.α)
 end
 
 function returns(K, L, p)
-    return p.A * (1 - p.α) * (K .^ p.α) .* (L .^ (-p.α))
+    Ls = max(L, p.ϵDkUp)
+    return p.α * p.A * K.^(p.α-1) .* Ls.^(1-p.α)
 end

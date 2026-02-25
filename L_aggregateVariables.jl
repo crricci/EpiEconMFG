@@ -1,27 +1,37 @@
 
-
-w = wFun(Ft,p)
-r = rFun(Ft,p)
-LII = LIIFun(Ft,p)
-
-
 function optimal_labor(∂kV, W, p)
-    lOpt = @. max(0.0, 1.0 - (1.0 - p.θ) / (∂kV * W))
-    return lOpt
+    # If effective wage is non-positive, the agent never works.
+    # Labor is constrained to [0,1].
+    lRaw = @. ifelse(W <= 0.0, 0.0, (1.0 - (1.0 - p.θ) / (∂kV * W)))
+    return @. min(1.0, max(0.0, lRaw))
 end
 
-function optimal_labor_ALL(∂kV, W, p)
-    lOpt_S = optimal_labor(∂kV.∂kVS, W.WS, p)
-    lOpt_I = optimal_labor(∂kV.∂kVI, W.WI, p)
-    lOpt_C = optimal_labor(∂kV.∂kVC, W.WC, p)
-    lOpt_R = optimal_labor(∂kV.∂kVR, W.WR, p)
-    
-    return (lOpt_S = lOpt_S, lOpt_I = lOpt_I, lOpt_C = lOpt_C, lOpt_R = lOpt_R)
+function optimal_labor_ALL(V, ∂V, F, w, p)
+
+    # compute first WI using the current guess w
+    WI = p.ηI * w
+    lOpt_I = optimal_labor(∂V.∂kVI, WI, p)
+
+    # then compute LI which depends on lOpt_I and the value functions 
+    LI = sum(lOpt_I .* F.ϕIt) * p.Δk  
+
+    # then compute WS which depends on WI and the value functions
+    # Avoid dividing by the very small floor used for log-derivatives.
+    denomS = max.(∂V.∂kVS, sqrt(p.ϵDkUp))
+    WS = p.ηS * w .+ p.β * LI .* (V.VI .- V.VS) ./ denomS
+    WC = p.ηC * w  # Zero for contained, useless
+    WR = p.ηR * w
+
+    lOpt_S = optimal_labor(∂V.∂kVS, WS, p)
+    lOpt_C = optimal_labor(∂V.∂kVC, WC, p)
+    lOpt_R = optimal_labor(∂V.∂kVR, WR, p)
+
+    return (lS = lOpt_S, lI = lOpt_I, lC = lOpt_C, lR = lOpt_R), (WS = WS, WI = WI, WC = WC, WR = WR)
 end
 
 function aggregate_labor_supply(lOpt, Ft, p)
 
-    lOpt_S = lOpt.lOpt_S; lOpt_I = lOpt.lOpt_I; lOpt_C = lOpt.lOpt_C; lOpt_R = lOpt.lOpt_R;
+    lOpt_S = lOpt.lS; lOpt_I = lOpt.lI; lOpt_C = lOpt.lC; lOpt_R = lOpt.lR;
     ϕSt = Ft.ϕSt; ϕIt = Ft.ϕIt; ϕCt = Ft.ϕCt; ϕRt = Ft.ϕRt;
 
     LS = sum(lOpt_S .* ϕSt) * p.Δk  

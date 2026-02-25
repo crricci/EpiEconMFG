@@ -45,7 +45,7 @@ Key epidemiological parameters:
 - `σ1, σ2, σ3`: Transition rates (I→C, C→R, I→R)
 - `λ`: Loss of immunity rate
 - `μ`: Birth-death rate
-- `α`: Recovery rate from containment
+- `αEpi`: Exit rate from containment (C→S, interpreted as death + replacement)
 
 ## Project Structure
 
@@ -53,8 +53,8 @@ Key epidemiological parameters:
 ├── L_parameters.jl         # Model parameters and structure
 ├── L_diff.jl               # Finite difference schemes
 ├── L_HJBsolver.jl          # Value iteration for HJB equations
-├── L_optimalLabor.jl       # Optimal labor supply computation
-├── L_aggregateVariables.jl # Aggregate equilibrium variables
+├── L_wageSolver.jl         # Wage fixed point (uses Roots.jl)
+├── L_aggregateVariables.jl # Optimal labor + aggregates (K, L)
 ├── L_plots.jl              # Visualization utilities
 ├── L_loadAll.jl            # Load all modules
 ├── main.jl                 # Main execution script
@@ -86,11 +86,9 @@ p = MFGEpiEcon(Float64)
 V0 = (VS = zeros(p.Nk), VI = zeros(p.Nk), 
       VC = zeros(p.Nk), VR = zeros(p.Nk))
 
-# Solve HJB equations (requires Fokker-Planck solution Ft)
-V_solution = value_iterationHJB(V0, p, Ft)
-
-# Compute optimal labor supply
-labor = optimal_labor_all(V_solution, p, Ft)
+# Solve HJB equations (requires an exogenous distribution Ft)
+# Note: the forward equation / Fokker–Planck (KFE) side is not implemented yet in this repository.
+V_solution = value_iterationHJB(V0, Ft, p)
 ```
 
 ## Numerical Methods
