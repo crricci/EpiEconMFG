@@ -18,6 +18,7 @@
     dI::T = 0.1           # disutility of being Infected
     dC::T = 0.2           # disutility of being Contained
     γ::T = 1.0            # coefficient quadratic cost of propensity to vaccination
+    qMax::T = 100.0       # cap on vaccination intensity for numerics (q >= 0, bounded above by qMax)
     θ::T = 0.5            # preference consumption vs leisure [0,1]
     ηS::T = 1.0           # productivity of Susceptible agents (benchmark)
     ηI::T = 0.7           # reduced productivity of Infected agents (<1)

@@ -4,7 +4,9 @@ function value_iterationHJB_given_wage(V0, Ft, p; w)
     V0: NamedTuple
         Initial guess (VS, VI, VC, VR), each Vector{Float64}
     Ft: NamedTuple
-        Fokker-Planck solution (ϕSt, ϕIt, ϕCt, ϕRt), each a Vector{Float64} Nk
+        Exogenous distribution over (S,I,C,R) across the k-grid:
+        (ϕSt, ϕIt, ϕCt, ϕRt), each a Vector{Float64} of length Nk.
+        Used to compute aggregates and infection externality terms.
 
     p: model parameters (MFGEpiEcon)
     """
@@ -103,8 +105,7 @@ function value_iterationHJB(V0, Ft, p)
             LI = sum(lOpt.lI .* Ft.ϕIt) * p.Δk
             LC = sum(lOpt.lC .* Ft.ϕCt) * p.Δk
             LR = sum(lOpt.lR .* Ft.ϕRt) * p.Δk
-            Ls = max(L, p.ϵDkUp)
-            println("diag: K=$K, L=$L (Ls=$Ls), LS=$LS, LI=$LI, LC=$LC, LR=$LR")
+            println("diag: K=$K, L=$L (Ls=$(max(L, p.ϵDkUp))), LS=$LS, LI=$LI, LC=$LC, LR=$LR")
             println("diag: lS∈[$(minimum(lOpt.lS)),$(maximum(lOpt.lS))], lI∈[$(minimum(lOpt.lI)),$(maximum(lOpt.lI))], lR∈[$(minimum(lOpt.lR)),$(maximum(lOpt.lR))]")
         end
 
@@ -120,9 +121,8 @@ function value_iterationHJB(V0, Ft, p)
     error("Wage fixed point did not converge in $(p.maxitWage) iterations.")
 end
 
-# HJB operator T
-function T_HJB(V, Ft, p; w0)
-
+# Build sparse linear system: (ρI - A - Q) V = u
+function build_HJB_linear_system(V, Ft, p; w0)
 
     # Unpack value functions
     VS = V.VS; VI = V.VI; VC = V.VC; VR = V.VR;
@@ -131,7 +131,7 @@ function T_HJB(V, Ft, p; w0)
     ∂VS_log = ∂k_log(VS, p.Nk, p.Δk, p.ϵDkUp)
     ∂VI_log = ∂k_log(VI, p.Nk, p.Δk, p.ϵDkUp)
     ∂VC_log = ∂k_log(VC, p.Nk, p.Δk, p.ϵDkUp)
-    ∂VR_log = ∂k_log(VR, p.Nk, p.Δk, p.ϵDkUp)   
+    ∂VR_log = ∂k_log(VR, p.Nk, p.Δk, p.ϵDkUp)
 
     # Use the provided wage guess inside the HJB operator; update it outside with damping.
     w = isfinite(w0) ? max(w0, p.ϵDkUp) : max(p.w_start, p.ϵDkUp)
@@ -139,18 +139,15 @@ function T_HJB(V, Ft, p; w0)
     # effective wages and optimal labor supply for each health state
     lOpt, W = optimal_labor_ALL(V, (∂kVS=∂VS_log, ∂kVI=∂VI_log, ∂kVC=∂VC_log, ∂kVR=∂VR_log), Ft, w, p)
     LI =sum(lOpt.lI .* Ft.ϕIt) * p.Δk           # for transition from S to I
-    WS = W.WS; WI = W.WI; WC = W.WC; WR = W.WR;
-    # side note: WS is an array. WI, WC, WR are scalars (independent of k)
-
     if p.verbose
-        if !all(isfinite, WS)
+        if !all(isfinite, W.WS)
             error("Non-finite values in WS (effective wage for S).")
         end
-        if !(isfinite(WI) && isfinite(WC) && isfinite(WR))
-            error("Non-finite effective wage scalar (WI/WC/WR). WI=$WI WC=$WC WR=$WR")
+        if !(isfinite(W.WI) && isfinite(W.WC) && isfinite(W.WR))
+            error("Non-finite effective wage scalar (WI/WC/WR). WI=$(W.WI) WC=$(W.WC) WR=$(W.WR)")
         end
     end
-    
+
     # returns to capital (interest rate)
     K = aggregate_kapital(Ft, p)
     L = aggregate_labor_supply(lOpt, Ft, p)
@@ -163,7 +160,7 @@ function T_HJB(V, Ft, p; w0)
 
     # capial income for each capital level
     k = collect(p.k)
-    capital_income = (r - p.δ) * k 
+    capital_income = (r - p.δ) * k
 
     # Optimal consumption from FOC: u_c = θ/c = V'(k)  =>  c = θ / V'(k)
     cS = p.θ ./ ∂VS_log
@@ -188,32 +185,6 @@ function T_HJB(V, Ft, p; w0)
     cI[end] = max(cI[end], max(incomeI[end], 0.0))
     cC[end] = max(cC[end], max(incomeC[end], 0.0))
     cR[end] = max(cR[end], max(incomeR[end], 0.0))
-    
-    # Drift b(k) = capital income + labor income - consumption.
-    # We compute separate drifts for work vs no-work regimes (labor income depends on l).
-    bS_work = capital_income .+ (p.ηS * w) .* lOpt.lS .- cS
-    bI_work = capital_income .+ (p.ηI * w) .* lOpt.lI .- cI
-    bR_work = capital_income .+ (p.ηR * w) .* lOpt.lR .- cR
-
-    bS_nowork = capital_income .- cS
-    bI_nowork = capital_income .- cI
-    bC_nowork = capital_income .- cC
-    bR_nowork = capital_income .- cR
-
-    # Upwind derivatives V'(k) selected based on drift sign
-    ∂VS_flux_Work = ∂k_flux(VS, bS_work, p)
-    ∂VI_flux_Work = ∂k_flux(VI, bI_work, p)
-    ∂VR_flux_Work = ∂k_flux(VR, bR_work, p)
-
-    ∂VS_flux_NoWork = ∂k_flux(VS, bS_nowork, p)
-    ∂VI_flux_NoWork = ∂k_flux(VI, bI_nowork, p)
-    ∂VC_flux_NoWork = ∂k_flux(VC, bC_nowork, p)
-    ∂VR_flux_NoWork = ∂k_flux(VR, bR_nowork, p)
-
-    
-    # Utility constants
-    Ū = p.θ * log(p.θ) + (1 - p.θ) * log(1 - p.θ) - 1
-    Û = p.θ * log(p.θ) - p.θ
 
     Nk = p.Nk
     Δk = p.Δk
@@ -221,7 +192,7 @@ function T_HJB(V, Ft, p; w0)
     # Rates (k-dependent)
     infection_rate = p.β .* lOpt.lS .* LI
 
-    v_rate = clamp.((VR .- VS) ./ p.γ, 0.0, 1.0)
+    v_rate = clamp.((VR .- VS) ./ p.γ, 0.0, p.qMax)
     v_cost = -0.5 .* p.γ .* (v_rate .^ 2)
 
     # Flow utilities u(k): compute from original utility using continuous controls
@@ -243,7 +214,6 @@ function T_HJB(V, Ft, p; w0)
     bC[1] = max(bC[1], 0.0); bC[end] = min(bC[end], 0.0)
     bR[1] = max(bR[1], 0.0); bR[end] = min(bR[end], 0.0)
 
-    # Build sparse linear system: (ρI - A - Q) V = u
     n = 4 * Nk
     M = spzeros(n, n)
     rhs = zeros(n)
@@ -306,17 +276,26 @@ function T_HJB(V, Ft, p; w0)
         rhs[rowR] = uR[i]
     end
 
-    Vvec = M \ rhs
+    return (M=M, rhs=rhs, w_update=w_update, w_used=w, Nk=Nk)
+end
+
+# HJB operator T
+function T_HJB(V, Ft, p; w0)
+
+    sys = build_HJB_linear_system(V, Ft, p; w0=w0)
+
+    Nk = sys.Nk
+    Vvec = sys.M \ sys.rhs
     VS_new = Vvec[1:Nk]
     VI_new = Vvec[Nk+1:2Nk]
     VC_new = Vvec[2Nk+1:3Nk]
     VR_new = Vvec[3Nk+1:4Nk]
 
     if p.verbose && !(all(isfinite, VS_new) && all(isfinite, VI_new) && all(isfinite, VC_new) && all(isfinite, VR_new))
-        error("Non-finite values in implicit HJB solve (w=$w).")
+        error("Non-finite values in implicit HJB solve (w=$(sys.w_used)).")
     end
 
-    return (VS = VS_new, VI = VI_new, VC = VC_new, VR = VR_new), w_update
+    return (VS = VS_new, VI = VI_new, VC = VC_new, VR = VR_new), sys.w_update
 end
 
 

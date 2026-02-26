@@ -72,7 +72,7 @@ function T_wage(w, V, ∂V, F, p)
     """ given wage computes L and K, then updates wage using the production function """
 
 
-    lOpt, WEff = optimal_labor_ALL(V, ∂V, F, w, p)
+    lOpt, _ = optimal_labor_ALL(V, ∂V, F, w, p)
 
     L = aggregate_labor_supply(lOpt, F, p)
     K = aggregate_kapital(F, p)
