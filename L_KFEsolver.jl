@@ -2,10 +2,24 @@
 # Coupled to the stationary HJB via optimal controls (c*, l*, q*).
 
 # Stack/unstack helpers for distributions on the k-grid.
+"""
+    stack_distribution(Ft)
+
+Stack a distribution `NamedTuple` `(ϕSt, ϕIt, ϕCt, ϕRt)` into a single vector of
+length `4*p.Nk` (with blocks ordered S, I, C, R).
+"""
 function stack_distribution(Ft)
     return vcat(Ft.ϕSt, Ft.ϕIt, Ft.ϕCt, Ft.ϕRt)
 end
 
+"""
+    unstack_distribution(phi, p)
+
+Inverse of `stack_distribution`.
+
+Takes a stacked vector `phi` of length `4*p.Nk` and returns the corresponding
+`NamedTuple` `(ϕSt, ϕIt, ϕCt, ϕRt)`.
+"""
 function unstack_distribution(phi, p)
     Nk = p.Nk
     return (
@@ -17,6 +31,22 @@ function unstack_distribution(phi, p)
 end
 
 # Compute policies needed by the forward equation, consistent with the stationary HJB implementation.
+"""
+    compute_FP_policies(V, Ft, p; w, deriv_cache=nothing)
+
+Compute the policy functions and auxiliary objects needed to build the FP/KFE generator.
+
+This mirrors the stationary HJB control logic (consumption from the FOC, labor from the
+static problem, vaccination from the HJB value difference), and enforces state constraints
+at the capital-grid boundaries.
+
+# Keyword Arguments
+- `w`: wage used in the static labor problem.
+- `deriv_cache`: optional `DerivDkCache` to reuse allocations when computing derivatives with respect to capital.
+
+# Returns
+A `NamedTuple` containing consumption, labor, drifts, transition intensities, and aggregates.
+"""
 function compute_FP_policies(V, Ft, p; w, deriv_cache=nothing)
 
     # Derivatives V'(k) with safe floor (same as HJB)
@@ -93,6 +123,15 @@ function compute_FP_policies(V, Ft, p; w, deriv_cache=nothing)
 end
 
 # Assemble drift operator for forward equation in conservative upwind form.
+"""
+    add_forward_drift_entries!(I, J, X, offset, b, p)
+
+Append triplet entries for the conservative upwind discretization of the drift term
+in the FP/KFE equation.
+
+This builds the sparse operator corresponding to the drift term in conservative form on the capital grid,
+with upwind flux splitting based on the sign of `b`.
+"""
 function add_forward_drift_entries!(I, J, X, offset, b, p)
     Nk = p.Nk
     Δk = p.Δk
@@ -130,6 +169,16 @@ function add_forward_drift_entries!(I, J, X, offset, b, p)
 end
 
 # Build the full forward generator G for phi_dot = G * phi.
+"""
+    build_FP_generator(policies, p)
+
+Build the sparse generator `G` for the stacked distribution dynamics:
+
+phi_dot = G * phi.
+
+Includes the conservative upwind drift blocks and the local epidemiological transition
+rates at each capital grid point.
+"""
 function build_FP_generator(policies, p)
     Nk = p.Nk
     n = 4 * Nk
@@ -187,6 +236,13 @@ function build_FP_generator(policies, p)
     return G
 end
 
+"""
+    renormalize_distribution!(phi, p)
+
+Renormalize the stacked distribution vector so its total mass integrates to 1.
+
+Returns the pre-normalization mass.
+"""
 function renormalize_distribution!(phi, p)
     Nk = p.Nk
     mass = (sum(phi[1:Nk]) + sum(phi[Nk + 1:2Nk]) + sum(phi[2Nk + 1:3Nk]) + sum(phi[3Nk + 1:4Nk])) * p.Δk
@@ -197,6 +253,11 @@ function renormalize_distribution!(phi, p)
     return mass
 end
 
+"""
+    project_nonnegative!(phi)
+
+Project the distribution vector onto the nonnegative orthant (elementwise max with 0).
+"""
 function project_nonnegative!(phi)
     @inbounds for i in eachindex(phi)
         phi[i] = max(phi[i], 0.0)

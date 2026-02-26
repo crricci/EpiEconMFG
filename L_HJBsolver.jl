@@ -1,15 +1,25 @@
+"""
+    value_iterationHJB_given_wage(V0, Ft, p; w, progress_cb=nothing, progress_every=p.progressHJB_every)
 
-function value_iterationHJB_given_wage(V0, Ft, p; w)
-    """
-    V0: NamedTuple
-        Initial guess (VS, VI, VC, VR), each Vector{Float64}
-    Ft: NamedTuple
-        Exogenous distribution over (S,I,C,R) across the k-grid:
-        (ϕSt, ϕIt, ϕCt, ϕRt), each a Vector{Float64} of length Nk.
-        Used to compute aggregates and infection externality terms.
+Solve the stationary-form HJB by value iteration for a *fixed* wage `w`.
 
-    p: model parameters (MFGEpiEcon)
-    """
+`Ft` is treated as exogenous during this solve; it affects aggregates and the infection
+externality terms used when computing optimal controls.
+
+# Arguments
+- `V0`: initial guess as a `NamedTuple` `(VS, VI, VC, VR)`, each a vector of length `p.Nk`.
+- `Ft`: distribution as a `NamedTuple` `(ϕSt, ϕIt, ϕCt, ϕRt)`, each a vector of length `p.Nk`.
+- `p`: model parameters (`MFGEpiEcon`).
+
+# Keyword Arguments
+- `w`: fixed wage.
+- `progress_cb`: optional callback `progress_cb(itV)` called during HJB iterations.
+- `progress_every`: call `progress_cb` every this many HJB iterations (minimum 1).
+
+# Returns
+A `NamedTuple` `(VS, VI, VC, VR, itV)`.
+"""
+function value_iterationHJB_given_wage(V0, Ft, p; w, progress_cb=nothing, progress_every::Int=getproperty(p, :progressHJB_every))
     # current iterate
     VS = copy(V0.VS)
     VI = copy(V0.VI)
@@ -21,7 +31,15 @@ function value_iterationHJB_given_wage(V0, Ft, p; w)
     dcache = DerivDkCache(eltype(VS), p.Nk)
     acache = HJBAssemblyCache(eltype(VS), p.Nk)
 
+    pe = progress_every
+    if pe < 1
+        pe = 1
+    end
+
     for it in 1:p.maxitHJBvalue
+        if progress_cb !== nothing && (it % pe == 0)
+            progress_cb(it)
+        end
 
         # HJB operator with fixed wage
         Vnew, _ = T_HJB((VS = VS, VI = VI, VC = VC, VR = VR), Ft, p; w0 = w_fixed, deriv_cache = dcache, assembly_cache = acache)
@@ -66,7 +84,7 @@ function value_iterationHJB_given_wage(V0, Ft, p; w)
 
         if err < p.tolHJBvalue
             p.verbose && println("Converged in $it iterations (error = $err)")
-            return (VS = VS, VI = VI, VC = VC, VR = VR)
+            return (VS = VS, VI = VI, VC = VC, VR = VR, itV = it)
         end
     end
 
@@ -94,6 +112,14 @@ function HJBAssemblyCache(::Type{T}, Nk::Int) where {T}
     return HJBAssemblyCache(Int[], Int[], T[], zeros(T, n))
 end
 
+"""
+    compute_∂V_dk!(cache, V, p)
+
+Compute safe finite-difference derivatives of the value functions with respect to capital,
+writing results into `cache`.
+
+Returns a `NamedTuple` with fields `(∂kVS, ∂kVI, ∂kVC, ∂kVR)`.
+"""
 function compute_∂V_dk!(cache::DerivDkCache, V, p)
     ∂k_safe!(cache.∂VS, V.VS, p.Nk, p.Δk, p.ϵDkUp)
     ∂k_safe!(cache.∂VI, V.VI, p.Nk, p.Δk, p.ϵDkUp)
@@ -102,6 +128,14 @@ function compute_∂V_dk!(cache::DerivDkCache, V, p)
     return (∂kVS=cache.∂VS, ∂kVI=cache.∂VI, ∂kVC=cache.∂VC, ∂kVR=cache.∂VR)
 end
 
+"""
+    compute_∂V_dk(V, p)
+
+Out-of-place version of `compute_∂V_dk!`.
+
+Allocates new derivative arrays and returns a `NamedTuple` with fields
+`(∂kVS, ∂kVI, ∂kVC, ∂kVR)`.
+"""
 function compute_∂V_dk(V, p)
     ∂VS_k = ∂k_safe(V.VS, p.Nk, p.Δk, p.ϵDkUp)
     ∂VI_k = ∂k_safe(V.VI, p.Nk, p.Δk, p.ϵDkUp)
@@ -110,6 +144,14 @@ function compute_∂V_dk(V, p)
     return (∂kVS=∂VS_k, ∂kVI=∂VI_k, ∂kVC=∂VC_k, ∂kVR=∂VR_k)
 end
 
+"""
+    compute_labor_and_aggregates(V, ∂V, Ft, p; w, K=nothing)
+
+Solve the static labor problem and compute aggregates/prices given a wage `w`.
+
+If `K` is provided, it is reused to avoid re-aggregating capital from `Ft`.
+Returns a `NamedTuple` containing optimal labor, effective wages, aggregates, and prices.
+"""
 function compute_labor_and_aggregates(V, ∂V, Ft, p; w, K=nothing)
     lOpt, W = optimal_labor_ALL(V, ∂V, Ft, w, p)
     Kval = isnothing(K) ? aggregate_kapital(Ft, p) : K
@@ -120,21 +162,56 @@ function compute_labor_and_aggregates(V, ∂V, Ft, p; w, K=nothing)
     return (lOpt=lOpt, W=W, K=Kval, L=L, r=r, w_update=w_update, LI=LI)
 end
 
-function value_iterationHJB(V0, Ft, p)
-    """Outer fixed point over wage; inner value iteration converges V given w."""
+"""
+    value_iterationHJB(V0, Ft, p; progress_cb=nothing)
 
+Outer fixed point over the wage, with an inner HJB value-iteration solve.
+
+At each wage iteration `itw`, the routine:
+1. Solves the stationary-form HJB for the current wage.
+2. Computes the implied wage from aggregates.
+3. Updates the wage with damping until convergence.
+
+If `progress_cb` is provided, it is called as `progress_cb(itw, itV)` at user-controlled
+frequencies (`p.progressWage_every` and `p.progressHJB_every`).
+
+# Returns
+A `NamedTuple` containing `(VS, VI, VC, VR, w, itw, itV)`.
+"""
+function value_iterationHJB(V0, Ft, p)
+	return value_iterationHJB(V0, Ft, p; progress_cb = nothing)
+end
+
+function value_iterationHJB(V0, Ft, p; progress_cb=nothing)
     V = (VS = copy(V0.VS), VI = copy(V0.VI), VC = copy(V0.VC), VR = copy(V0.VR))
     w = p.w_start
     K = aggregate_kapital(Ft, p)
 
     dcache = DerivDkCache(eltype(V.VS), p.Nk)
 
+    last_itV = 0
+    wage_every = getproperty(p, :progressWage_every)
+    hjb_every = getproperty(p, :progressHJB_every)
+    if wage_every < 1
+        wage_every = 1
+    end
+    if hjb_every < 1
+        hjb_every = 1
+    end
+
     for itw in 1:p.maxitWage
+        if progress_cb !== nothing && (itw % wage_every == 0)
+            progress_cb(itw, 0)
+        end
 
         p.verbose && println("\nWage iteration itw=$itw, w=$w")
 
         # 1) Solve HJB given wage
-        V = value_iterationHJB_given_wage(V, Ft, p; w = w)
+        # Important: do not pass itw through the HJB callback, otherwise the caller
+        # sees wage iteration "updating" at the HJB frequency (making progressWage_every look ignored).
+        inner_cb = progress_cb === nothing ? nothing : (itV -> progress_cb(0, itV))
+        V = value_iterationHJB_given_wage(V, Ft, p; w = w, progress_cb = inner_cb, progress_every = hjb_every)
+        last_itV = hasproperty(V, :itV) ? V.itV : 0
 
         # 2) Update wage using implied aggregate wage mapping
         ∂V = compute_∂V_dk!(dcache, V, p)
@@ -159,7 +236,15 @@ function value_iterationHJB(V0, Ft, p)
         gap = abs(w_implied - w)
         p.verbose && println("w_implied=$w_implied gap=$gap ωw=$(p.ωw)")
         if gap < p.tolWage
-            return (VS = V.VS, VI = V.VI, VC = V.VC, VR = V.VR, w = w_implied)
+            return (
+                VS = V.VS,
+                VI = V.VI,
+                VC = V.VC,
+                VR = V.VR,
+                w = w_implied,
+                itw = itw,
+                itV = last_itV,
+            )
         end
 
         w = (1 - p.ωw) * w + p.ωw * w_implied
@@ -169,6 +254,18 @@ function value_iterationHJB(V0, Ft, p)
 end
 
 # Build sparse linear system: (ρI - A - Q) V = u
+"""
+    build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cache=nothing)
+
+Assemble the sparse linear system corresponding to the stationary-form HJB discretization.
+
+Uses an upwind (Godunov / flux-splitting) discretization for the drift term and enforces
+state-constraint boundary conditions via control adjustments at the grid endpoints.
+
+# Returns
+A `NamedTuple` containing the sparse matrix `M`, the right-hand side `rhs`, and diagnostic
+objects such as the wage used inside the operator and the implied wage update.
+"""
 function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cache=nothing)
 
     # Unpack value functions
@@ -205,7 +302,7 @@ function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cac
         error("Non-finite aggregates: K=$K L=$L r=$r")
     end
 
-    # capial income for each capital level
+    # capital income for each capital level
     capital_income = (r - p.δ) .* p.k
 
     # Optimal consumption from FOC: u_c = θ/c = V'(k)  =>  c = θ / V'(k)
@@ -351,6 +448,14 @@ function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cac
 end
 
 # HJB operator T
+"""
+    T_HJB(V, Ft, p; w0, deriv_cache=nothing, assembly_cache=nothing)
+
+HJB operator for fixed-point / value-iteration.
+
+Builds and solves the implicit linear system for the value functions, returning the new
+value functions and the implied wage update.
+"""
 function T_HJB(V, Ft, p; w0, deriv_cache=nothing, assembly_cache=nothing)
 
     sys = build_HJB_linear_system(V, Ft, p; w0=w0, deriv_cache=deriv_cache, assembly_cache=assembly_cache)

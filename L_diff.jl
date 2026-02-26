@@ -2,18 +2,30 @@
 
 
 # Safe derivative V'(k) (central difference + positivity floor)
+"""
+    ∂k_safe(f, p)
+
+Compute a numerically safe approximation of ∂f/∂k on the capital grid.
+
+Uses central differences in the interior and one-sided differences at the boundaries,
+then floors the result at `p.ϵDkUp` to avoid division by (near) zero later on.
+"""
 function ∂k_safe(f, p)
     return ∂k_safe(f, p.Nk, p.Δk, p.ϵDkUp)
 end
 
+"""
+    ∂k_safe!(∂f, f, Nk, Δk, ϵ)
+
+In-place version of `∂k_safe`.
+
+Computes a finite-difference derivative on a 1D grid with spacing `Δk`, using central
+differences in the interior and one-sided differences at the boundaries, and floors
+the derivative at `ϵ`.
+
+`∂f` must be a vector of length `Nk`.
+"""
 function ∂k_safe!(∂f, f, Nk, Δk, ϵ)
-    """
-    In-place safe derivative for V'(k) using central differences.
-    Floors the derivative at ϵ to avoid division by (near) zero.
-
-    `∂f` must be a vector of length Nk.
-    """
-
     @inbounds begin
         # k = 0
         Dp = (f[2] - f[1]) / Δk
@@ -34,11 +46,15 @@ function ∂k_safe!(∂f, f, Nk, Δk, ϵ)
     return ∂f
 end
 
-function ∂k_safe(f, Nk, Δk, ϵ)
-    """
-    Compute safe derivative V'(k) using central differences.
-    """
+"""
+    ∂k_safe(f, Nk, Δk, ϵ)
 
+Out-of-place version of `∂k_safe!`.
+
+Allocates an output vector `∂f = similar(f)` and fills it with the safe finite-difference
+derivative.
+"""
+function ∂k_safe(f, Nk, Δk, ϵ)
     ∂f = similar(f)
     return ∂k_safe!(∂f, f, Nk, Δk, ϵ)
 end

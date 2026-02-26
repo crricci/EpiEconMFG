@@ -121,6 +121,7 @@ Key FP/KFE numerical parameters:
 ├── L_wageSolver.jl         # Wage fixed point (uses Roots.jl)
 ├── L_aggregateVariables.jl # Optimal labor + aggregates (K, L)
 ├── L_KFEsolver.jl          # Forward Kolmogorov / Fokker--Planck solver (distribution dynamics)
+├── L_MFGCsolver.jl         # One-stop coupled solver: FP time marching + stationary HJB + wage
 ├── L_plots.jl              # Visualization utilities
 ├── L_loadAll.jl            # Load all modules
 ├── main.jl                 # Main execution script
@@ -157,7 +158,11 @@ V0 = (VS = zeros(p.Nk), VI = zeros(p.Nk),
 # Stationary solve given an exogenous distribution Ft
 V_solution = value_iterationHJB(V0, Ft, p)
 
-# Dynamic distribution: FP time-marching coupled with stationary HJB
+# One-stop coupled simulation (recommended): FP time-marching + stationary HJB + wage
+F0 = create_test_distribution(p)
+result = solveModel(p, F0; show_progress=true)
+
+# (Alternative) FP time-marching coupled with stationary HJB (older API)
 t, Fts, prices = simulate_FP(F0, V0, p)
 ```
 

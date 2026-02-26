@@ -1,16 +1,23 @@
-function fixed_point_wage(V, ∂V, F, p; w0)
-    """
-    Solves: w = T_wage(w, V, F, p)
+"""
+    fixed_point_wage(V, ∂V, F, p; w0)
 
-    Given wages find optimal labour allocation, aggregate labor and capital, 
-    then update wage using the production function. Iterate until convergence.
-    
-    Arguments:
-    - V, ∂V, F, p: parameters passed to T_wage
-    - w0: initial guess for wage
-    
-    Returns: equilibrium wage w*
-    """
+Solve the market-clearing wage fixed point:
+
+w = T_wage(w; V, ∂V, F, p).
+
+Given a candidate wage, compute optimal labor, aggregate labor/capital, then update
+the wage from the production function. Iterates until convergence.
+
+# Arguments
+- `V`, `∂V`, `F`, `p`: inputs passed through to `T_wage`.
+
+# Keyword Arguments
+- `w0`: initial guess for the wage.
+
+# Returns
+- The equilibrium wage (floored at `p.ϵDkUp`).
+"""
+function fixed_point_wage(V, ∂V, F, p; w0)
     w_init = isfinite(w0) ? max(w0, p.ϵDkUp) : max(p.w_start, p.ϵDkUp)
 
     # Residual: g(w) = T_wage(w) - w
@@ -68,10 +75,15 @@ function fixed_point_wage(V, ∂V, F, p; w0)
 end
 
 
+"""
+    T_wage(w, V, ∂V, F, p)
+
+Wage update operator.
+
+For a given wage `w`, computes optimal labor, aggregates (K, L), and returns the
+implied wage from the production function.
+"""
 function T_wage(w, V, ∂V, F, p)
-    """ given wage computes L and K, then updates wage using the production function """
-
-
     lOpt, _ = optimal_labor_ALL(V, ∂V, F, w, p)
 
     L = aggregate_labor_supply(lOpt, F, p)

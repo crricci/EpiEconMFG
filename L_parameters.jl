@@ -33,11 +33,11 @@
     k::LinRange{T, Int64} = LinRange(0,MaxK,Nk) # capital grid
 
     # Temporal domain
-    T_End::T = 5.00            # End time (measure in years)
+    T_End::T = 4.0            # End time (measured in years)
     t_save::LinRange{T, Int64} = LinRange(0,T_End,1000)
 
     # numerical FP/KFE solver (distribution dynamics)
-    Δt::T = 0.025               # time step for FP on [0, T_End] (Nstep is derived)
+    Δt::T = 0.05               # time step for FP on [0, T_End] (Nstep is derived)
     FP_Nstep::Int = Int(ceil(T_End / Δt))  # derived default number of FP steps on [0, T_End]
     HJB_every::Int = 5          # recompute stationary HJB+wage every HJB_every FP steps (set to 1 for fully coupled)
 
@@ -49,22 +49,62 @@
     w_start::T = 15.0          # initial guess for wage in fixed point iteration
 
     # outer fixed point (general equilibrium wage)
-    ωw::T = 5e-2               # damping for wage updates
-    tolWage::T = 1e-6          # convergence tolerance for wage fixed point
-    maxitWage::Int = 50        # maximum iterations for wage fixed point
-    
+    ωw::T = 0.2                # damping for wage updates
+    tolWage::T = 1e-3          # convergence tolerance for wage fixed point
+    maxitWage::Int = 500        # maximum iterations for wage fixed point
+
+
+    # progress (when verbose=false but you still want to monitor iteration counters)
+    progressWage_every::Int = 5   # show wage iteration counter every this many wage FP iterations
+    progressHJB_every::Int = 20   # show HJB value-iteration counter every this many HJB iterations
     
     # general
-    verbose::Bool = true
+    verbose::Bool = false
 
 end
 
+"""
+    wage(K, L, p)
+
+Compute the competitive wage implied by the Cobb–Douglas production function.
+
+Inputs can be scalars or arrays; `L` is floored at `p.ϵDkUp` for numerical safety.
+"""
 function wage(K, L, p)
     Ls = max(L, p.ϵDkUp)
     return (1-p.α) * p.A * K.^p.α  .* Ls.^(-p.α)
 end
 
+"""
+    returns(K, L, p)
+
+Compute the (gross) marginal product of capital implied by the Cobb–Douglas production function.
+
+Inputs can be scalars or arrays; `L` is floored at `p.ϵDkUp` for numerical safety.
+"""
 function returns(K, L, p)
     Ls = max(L, p.ϵDkUp)
     return p.α * p.A * K.^(p.α-1) .* Ls.^(1-p.α)
 end
+
+"""
+    create_test_distribution(p)
+
+Create a simple initial distribution over epidemiological states.
+
+Returns a `NamedTuple` `(ϕSt, ϕIt, ϕCt, ϕRt)` where each component is a length-`p.Nk`
+vector, normalized so that total mass integrates to 1 on the capital grid.
+"""
+function create_test_distribution(p)
+    St = 0.7 * ones(p.Nk)
+    It = 0.1 * ones(p.Nk)
+    Ct = 0.1 * ones(p.Nk)
+    Rt = 0.1 * ones(p.Nk)
+    Mass = sum(St + It + Ct + Rt) * p.Δk
+    St .= St ./ Mass
+    It .= It ./ Mass
+    Ct .= Ct ./ Mass
+    Rt .= Rt ./ Mass
+    return (ϕSt = St, ϕIt = It, ϕCt = Ct, ϕRt = Rt)
+end
+

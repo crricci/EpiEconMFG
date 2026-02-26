@@ -1,21 +1,5 @@
-
-
-function create_test_distribution(p)
-    St = 0.7 * ones(p.Nk) 
-    It = 0.1 * ones(p.Nk)
-    Ct = 0.1 * ones(p.Nk)
-    Rt = 0.1 * ones(p.Nk)
-    Mass = sum(St + It + Ct + Rt) *  p.Δk
-    St .= St ./ Mass
-    It .= It ./ Mass
-    Ct .= Ct ./ Mass
-    Rt .= Rt ./ Mass
-    return (ϕSt = St, ϕIt = It, ϕCt = Ct, ϕRt = Rt)
-end
-
-
 include("L_loadAll.jl")
-p = MFGEpiEcon(ω=0.1, maxitHJBvalue=3000, ωw=0.2, maxitWage=200, tolWage=1e-3, verbose=true)
+p = MFGEpiEcon(verbose=true)
 Ft = create_test_distribution(p)
 
 V = (
