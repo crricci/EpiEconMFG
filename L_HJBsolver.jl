@@ -18,10 +18,13 @@ function value_iterationHJB_given_wage(V0, Ft, p; w)
 
     w_fixed = w
 
+    dcache = DerivLogCache(eltype(VS), p.Nk)
+    acache = HJBAssemblyCache(eltype(VS), p.Nk)
+
     for it in 1:p.maxitHJBvalue
 
         # HJB operator with fixed wage
-        Vnew, _ = T_HJB((VS = VS, VI = VI, VC = VC, VR = VR), Ft, p; w0 = w_fixed)
+        Vnew, _ = T_HJB((VS = VS, VI = VI, VC = VC, VR = VR), Ft, p; w0 = w_fixed, deriv_cache = dcache, assembly_cache = acache)
 
         if !(all(isfinite, Vnew.VS) && all(isfinite, Vnew.VI) && all(isfinite, Vnew.VC) && all(isfinite, Vnew.VR))
             error("Non-finite values in HJB operator at iter=$it (w=$w_fixed).")
@@ -70,11 +73,61 @@ function value_iterationHJB_given_wage(V0, Ft, p; w)
     error("Value iteration did not converge in $(p.maxitHJBvalue) iterations.")
 end
 
+mutable struct DerivLogCache{T}
+    ∂VS::Vector{T}
+    ∂VI::Vector{T}
+    ∂VC::Vector{T}
+    ∂VR::Vector{T}
+end
+
+DerivLogCache(::Type{T}, Nk::Int) where {T} = DerivLogCache(zeros(T, Nk), zeros(T, Nk), zeros(T, Nk), zeros(T, Nk))
+
+mutable struct HJBAssemblyCache{T}
+    I::Vector{Int}
+    J::Vector{Int}
+    X::Vector{T}
+    rhs::Vector{T}
+end
+
+function HJBAssemblyCache(::Type{T}, Nk::Int) where {T}
+    n = 4 * Nk
+    return HJBAssemblyCache(Int[], Int[], T[], zeros(T, n))
+end
+
+function compute_∂V_logs!(cache::DerivLogCache, V, p)
+    ∂k_log!(cache.∂VS, V.VS, p.Nk, p.Δk, p.ϵDkUp)
+    ∂k_log!(cache.∂VI, V.VI, p.Nk, p.Δk, p.ϵDkUp)
+    ∂k_log!(cache.∂VC, V.VC, p.Nk, p.Δk, p.ϵDkUp)
+    ∂k_log!(cache.∂VR, V.VR, p.Nk, p.Δk, p.ϵDkUp)
+    return (∂kVS=cache.∂VS, ∂kVI=cache.∂VI, ∂kVC=cache.∂VC, ∂kVR=cache.∂VR)
+end
+
+function compute_∂V_logs(V, p)
+    ∂VS_log = ∂k_log(V.VS, p.Nk, p.Δk, p.ϵDkUp)
+    ∂VI_log = ∂k_log(V.VI, p.Nk, p.Δk, p.ϵDkUp)
+    ∂VC_log = ∂k_log(V.VC, p.Nk, p.Δk, p.ϵDkUp)
+    ∂VR_log = ∂k_log(V.VR, p.Nk, p.Δk, p.ϵDkUp)
+    return (∂kVS=∂VS_log, ∂kVI=∂VI_log, ∂kVC=∂VC_log, ∂kVR=∂VR_log)
+end
+
+function compute_labor_and_aggregates(V, ∂V, Ft, p; w, K=nothing)
+    lOpt, W = optimal_labor_ALL(V, ∂V, Ft, w, p)
+    Kval = isnothing(K) ? aggregate_kapital(Ft, p) : K
+    L = aggregate_labor_supply(lOpt, Ft, p)
+    r = returns(Kval, L, p)
+    w_update = wage(Kval, L, p)
+    LI = sum(lOpt.lI .* Ft.ϕIt) * p.Δk
+    return (lOpt=lOpt, W=W, K=Kval, L=L, r=r, w_update=w_update, LI=LI)
+end
+
 function value_iterationHJB(V0, Ft, p)
     """Outer fixed point over wage; inner value iteration converges V given w."""
 
     V = (VS = copy(V0.VS), VI = copy(V0.VI), VC = copy(V0.VC), VR = copy(V0.VR))
     w = p.w_start
+    K = aggregate_kapital(Ft, p)
+
+    dcache = DerivLogCache(eltype(V.VS), p.Nk)
 
     for itw in 1:p.maxitWage
 
@@ -84,17 +137,11 @@ function value_iterationHJB(V0, Ft, p)
         V = value_iterationHJB_given_wage(V, Ft, p; w = w)
 
         # 2) Update wage using implied aggregate wage mapping
-        ∂VS_log = ∂k_log(V.VS, p.Nk, p.Δk, p.ϵDkUp)
-        ∂VI_log = ∂k_log(V.VI, p.Nk, p.Δk, p.ϵDkUp)
-        ∂VC_log = ∂k_log(V.VC, p.Nk, p.Δk, p.ϵDkUp)
-        ∂VR_log = ∂k_log(V.VR, p.Nk, p.Δk, p.ϵDkUp)
-
-        # Implied wage mapping w -> w' using current policies and exogenous distribution
-        ∂V = (∂kVS=∂VS_log, ∂kVI=∂VI_log, ∂kVC=∂VC_log, ∂kVR=∂VR_log)
-        lOpt, _ = optimal_labor_ALL(V, ∂V, Ft, w, p)
-        K = aggregate_kapital(Ft, p)
-        L = aggregate_labor_supply(lOpt, Ft, p)
-        w_implied = wage(K, L, p)
+        ∂V = compute_∂V_logs!(dcache, V, p)
+        agg = compute_labor_and_aggregates(V, ∂V, Ft, p; w=w, K=K)
+        lOpt = agg.lOpt
+        L = agg.L
+        w_implied = agg.w_update
 
         if !(isfinite(w_implied) && w_implied > 0.0)
             error("Implied wage is non-finite or non-positive: w_implied=$w_implied")
@@ -122,23 +169,29 @@ function value_iterationHJB(V0, Ft, p)
 end
 
 # Build sparse linear system: (ρI - A - Q) V = u
-function build_HJB_linear_system(V, Ft, p; w0)
+function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cache=nothing)
 
     # Unpack value functions
     VS = V.VS; VI = V.VI; VC = V.VC; VR = V.VR;
 
     # Compute derivatives V'(k). Safe log-derivative
-    ∂VS_log = ∂k_log(VS, p.Nk, p.Δk, p.ϵDkUp)
-    ∂VI_log = ∂k_log(VI, p.Nk, p.Δk, p.ϵDkUp)
-    ∂VC_log = ∂k_log(VC, p.Nk, p.Δk, p.ϵDkUp)
-    ∂VR_log = ∂k_log(VR, p.Nk, p.Δk, p.ϵDkUp)
+    ∂V = isnothing(deriv_cache) ? compute_∂V_logs(V, p) : compute_∂V_logs!(deriv_cache, V, p)
+    ∂VS_log = ∂V.∂kVS
+    ∂VI_log = ∂V.∂kVI
+    ∂VC_log = ∂V.∂kVC
+    ∂VR_log = ∂V.∂kVR
 
     # Use the provided wage guess inside the HJB operator; update it outside with damping.
     w = isfinite(w0) ? max(w0, p.ϵDkUp) : max(p.w_start, p.ϵDkUp)
 
-    # effective wages and optimal labor supply for each health state
-    lOpt, W = optimal_labor_ALL(V, (∂kVS=∂VS_log, ∂kVI=∂VI_log, ∂kVC=∂VC_log, ∂kVR=∂VR_log), Ft, w, p)
-    LI =sum(lOpt.lI .* Ft.ϕIt) * p.Δk           # for transition from S to I
+    agg = compute_labor_and_aggregates(V, ∂V, Ft, p; w=w)
+    lOpt = agg.lOpt
+    W = agg.W
+    K = agg.K
+    L = agg.L
+    r = agg.r
+    w_update = agg.w_update
+    LI = agg.LI
     if p.verbose
         if !all(isfinite, W.WS)
             error("Non-finite values in WS (effective wage for S).")
@@ -148,19 +201,12 @@ function build_HJB_linear_system(V, Ft, p; w0)
         end
     end
 
-    # returns to capital (interest rate)
-    K = aggregate_kapital(Ft, p)
-    L = aggregate_labor_supply(lOpt, Ft, p)
-    r = returns(K, L, p)
-    w_update = wage(K, L, p)
-
     if p.verbose && !(isfinite(K) && isfinite(L) && isfinite(r))
         error("Non-finite aggregates: K=$K L=$L r=$r")
     end
 
     # capial income for each capital level
-    k = collect(p.k)
-    capital_income = (r - p.δ) * k
+    capital_income = (r - p.δ) .* p.k
 
     # Optimal consumption from FOC: u_c = θ/c = V'(k)  =>  c = θ / V'(k)
     cS = p.θ ./ ∂VS_log
@@ -215,24 +261,45 @@ function build_HJB_linear_system(V, Ft, p; w0)
     bR[1] = max(bR[1], 0.0); bR[end] = min(bR[end], 0.0)
 
     n = 4 * Nk
-    M = spzeros(n, n)
-    rhs = zeros(n)
+    I = Int[]
+    J = Int[]
+    X = eltype(VS)[]
+    rhs = zeros(eltype(VS), n)
+
+    if !isnothing(assembly_cache)
+        I = assembly_cache.I
+        J = assembly_cache.J
+        X = assembly_cache.X
+        rhs = assembly_cache.rhs
+        empty!(I); empty!(J); empty!(X)
+        fill!(rhs, 0)
+    end
+
+    sizehint!(I, 8n)
+    sizehint!(J, 8n)
+    sizehint!(X, 8n)
 
     idx(state, i) = (state - 1) * Nk + i
 
-    function add_drift_row!(row, i, b)
-        b_i = b[i]
+    function push_entry!(row, col, val)
+        push!(I, row)
+        push!(J, col)
+        push!(X, val)
+        return nothing
+    end
+
+    function add_drift_entries!(row, i, b_i)
         bplus = max(b_i, 0.0)
         bminus = min(b_i, 0.0)
         aL = bplus / Δk
         aU = (-bminus) / Δk
 
-        M[row, row] += aL + aU
+        push_entry!(row, row, aL + aU)
         if i > 1
-            M[row, row - 1] += -aL
+            push_entry!(row, row - 1, -aL)
         end
         if i < Nk
-            M[row, row + 1] += -aU
+            push_entry!(row, row + 1, -aU)
         end
         return nothing
     end
@@ -245,44 +312,45 @@ function build_HJB_linear_system(V, Ft, p; w0)
         # S row
         rowS = idx(1, i)
         outS = infection_rate[i] + v_rate[i]
-        M[rowS, rowS] += p.ρ + outS
-        add_drift_row!(rowS, i, -bS)
-        M[rowS, idx(2, i)] += -infection_rate[i]
-        M[rowS, idx(4, i)] += -v_rate[i]
+        push_entry!(rowS, rowS, p.ρ + outS)
+        add_drift_entries!(rowS, i, -bS[i])
+        push_entry!(rowS, idx(2, i), -infection_rate[i])
+        push_entry!(rowS, idx(4, i), -v_rate[i])
         rhs[rowS] = uS[i]
 
         # I row
         rowI = idx(2, i)
-        M[rowI, rowI] += p.ρ + exitI
-        add_drift_row!(rowI, i, -bI)
-        M[rowI, idx(1, i)] += -p.μ
-        M[rowI, idx(3, i)] += -p.σ1
-        M[rowI, idx(4, i)] += -p.σ3
+        push_entry!(rowI, rowI, p.ρ + exitI)
+        add_drift_entries!(rowI, i, -bI[i])
+        push_entry!(rowI, idx(1, i), -p.μ)
+        push_entry!(rowI, idx(3, i), -p.σ1)
+        push_entry!(rowI, idx(4, i), -p.σ3)
         rhs[rowI] = uI[i]
 
         # C row
         rowC = idx(3, i)
-        M[rowC, rowC] += p.ρ + exitC
-        add_drift_row!(rowC, i, -bC)
-        M[rowC, idx(1, i)] += -(p.αEpi + p.μ)
-        M[rowC, idx(4, i)] += -p.σ2
+        push_entry!(rowC, rowC, p.ρ + exitC)
+        add_drift_entries!(rowC, i, -bC[i])
+        push_entry!(rowC, idx(1, i), -(p.αEpi + p.μ))
+        push_entry!(rowC, idx(4, i), -p.σ2)
         rhs[rowC] = uC[i]
 
         # R row
         rowR = idx(4, i)
-        M[rowR, rowR] += p.ρ + exitR
-        add_drift_row!(rowR, i, -bR)
-        M[rowR, idx(1, i)] += -exitR
+        push_entry!(rowR, rowR, p.ρ + exitR)
+        add_drift_entries!(rowR, i, -bR[i])
+        push_entry!(rowR, idx(1, i), -exitR)
         rhs[rowR] = uR[i]
     end
 
+    M = sparse(I, J, X, n, n)
     return (M=M, rhs=rhs, w_update=w_update, w_used=w, Nk=Nk)
 end
 
 # HJB operator T
-function T_HJB(V, Ft, p; w0)
+function T_HJB(V, Ft, p; w0, deriv_cache=nothing, assembly_cache=nothing)
 
-    sys = build_HJB_linear_system(V, Ft, p; w0=w0)
+    sys = build_HJB_linear_system(V, Ft, p; w0=w0, deriv_cache=deriv_cache, assembly_cache=assembly_cache)
 
     Nk = sys.Nk
     Vvec = sys.M \ sys.rhs

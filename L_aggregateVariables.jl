@@ -46,7 +46,7 @@ end
 function aggregate_kapital(Ft, p)
 
     ϕSt = Ft.ϕSt; ϕIt = Ft.ϕIt; ϕCt = Ft.ϕCt; ϕRt = Ft.ϕRt;
-    k = collect(p.k)
+    k = p.k
 
     KS = sum(k .* ϕSt) * p.Δk  
     KI = sum(k .* ϕIt) * p.Δk  

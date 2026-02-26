@@ -26,30 +26,6 @@ V = (
 )
 
 
-# debug fixed point iteration for wage
-# ∂VS_log = ∂k_log(V.VS, p.Nk, p.Δk, p.ϵDkUp)
-# ∂VI_log = ∂k_log(V.VI, p.Nk, p.Δk, p.ϵDkUp)
-# ∂VC_log = ∂k_log(V.VC, p.Nk, p.Δk, p.ϵDkUp)
-# ∂VR_log = ∂k_log(V.VR, p.Nk, p.Δk, p.ϵDkUp)   
-# w_star = fixed_point_wage(V,(∂kVS=∂VS_log, ∂kVI=∂VI_log, ∂kVC=∂VC_log, ∂kVR=∂VR_log),Ft,p; w0 = p.w_start)
-# # debug T_wage function
-# w = LinRange(0.01, 100.0, 1000)
-# wages = [T_wage(wi,V,(∂kVS=∂VS_log, ∂kVI=∂VI_log, ∂kVC=∂VC_log, ∂kVR=∂VR_log),Ft,p) for wi in w]
-# plot(w, wages, label="T_wage(w) vs w", xlabel="w", ylabel="T_wage(w)", title="Fixed Point Iteration for Wage")
-
-
-# # debug HJB solver
-# V1,w1 = T_HJB(V, Ft, p; w0=15.0)
-# V2,w2 = T_HJB(V1, Ft, p; w0=w1)
-# V3,w3 = T_HJB(V2, Ft, p; w0=w2)
-# V4,w4 = T_HJB(V3, Ft, p; w0=w3)
-
-# plot(p.k,V.VS, label="VS", xlabel="k", ylabel="Value", title="HJB Operator T_HJB")
-# plot(p.k,V1.VS, label="VS_new", xlabel="k", ylabel="Value", title="HJB Operator T_HJB")
-# plot(p.k,V2.VS, label="VS_new2", xlabel="k", ylabel="Value", title="HJB Operator T_HJB")
-# plot(p.k,V3.VS, label="VS_new3", xlabel="k", ylabel="Value", title="HJB Operator T_HJB")
-# plot(p.k,V4.VS, label="VS_new4", xlabel="k", ylabel="Value", title="HJB Operator T_HJB")
-
 Vsol = nothing
 try
     println("DEBUG: Nk=$(p.Nk), Δk=$(p.Δk), ω=$(p.ω), tol=$(p.tolHJBvalue), maxit=$(p.maxitHJBvalue)")
