@@ -199,31 +199,24 @@ t, Fts, prices = simulate_FP(F0, V0, p)
 
 Given the optimal controls $c^*(t,k,x)$, $\ell^*(t,k,x)$, and $q^*(t,k)$ implied by the stationary HJB at time $t$ (and current prices $w_t,r_t$), the distribution evolves according to the FP system:
 
-\begin{multline}
-\partial_t \phi(t,k,S) = +\mu\big(\phi(t,k,S) + \phi(t,k,I) + \phi(t,k,C) + \phi(t,k,R)\big)
- + \alpha_{\text{Epi}} \, \phi(t,k,C) - \mu \, \phi(t,k,S) \\
- - q^*(t,k) \, \phi(t,k,S) - \beta \, \ell^*(t,k,S)\,\phi(t,k,S)\,L_I(t)
- + \lambda \, \phi(t,k,R)
- -\partial_k\Big(\phi(t,k,S)\, b_S(t,k)\Big),
-\end{multline}
-
-\begin{multline}
-\partial_t \phi(t,k,I) = -\big(\sigma_1 + \mu + \sigma_3\big)\,\phi(t,k,I)
- + \beta \, \ell^*(t,k,S)\,\phi(t,k,S)\,L_I(t)
- -\partial_k\Big(\phi(t,k,I)\, b_I(t,k)\Big),
-\end{multline}
-
-\begin{multline}
-\partial_t \phi(t,k,C) = \sigma_1 \, \phi(t,k,I)
- - \big(\alpha_{\text{Epi}} + \sigma_2 + \mu\big)\,\phi(t,k,C)
- -\partial_k\Big(\phi(t,k,C)\, b_C(t,k)\Big),
-\end{multline}
-
-\begin{multline}
-\partial_t \phi(t,k,R) = \sigma_2 \, \phi(t,k,C) + \sigma_3 \, \phi(t,k,I)
- - \big(\lambda + \mu\big)\,\phi(t,k,R) + q^*(t,k)\,\phi(t,k,S)
- -\partial_k\Big(\phi(t,k,R)\, b_R(t,k)\Big),
-\end{multline}
+$$
+\begin{aligned}
+\partial_t \phi(t,k,S) &= \mu\big(\phi(t,k,S) + \phi(t,k,I) + \phi(t,k,C) + \phi(t,k,R)\big)
++ \alpha_{\text{Epi}}\,\phi(t,k,C) - \mu\,\phi(t,k,S) \\
+&\quad - q^*(t,k)\,\phi(t,k,S) - \beta\,\ell^*(t,k,S)\,\phi(t,k,S)\,L_I(t)
++ \lambda\,\phi(t,k,R)
+- \partial_k\big(\phi(t,k,S)\, b_S(t,k)\big),\\
+\partial_t \phi(t,k,I) &= -\big(\sigma_1 + \mu + \sigma_3\big)\,\phi(t,k,I)
++ \beta\,\ell^*(t,k,S)\,\phi(t,k,S)\,L_I(t)
+- \partial_k\big(\phi(t,k,I)\, b_I(t,k)\big),\\
+\partial_t \phi(t,k,C) &= \sigma_1\,\phi(t,k,I)
+- \big(\alpha_{\text{Epi}} + \sigma_2 + \mu\big)\,\phi(t,k,C)
+- \partial_k\big(\phi(t,k,C)\, b_C(t,k)\big),\\
+\partial_t \phi(t,k,R) &= \sigma_2\,\phi(t,k,C) + \sigma_3\,\phi(t,k,I)
+- \big(\lambda + \mu\big)\,\phi(t,k,R) + q^*(t,k)\,\phi(t,k,S)
+- \partial_k\big(\phi(t,k,R)\, b_R(t,k)\big).
+\end{aligned}
+$$
 
 with
 $$
