@@ -28,13 +28,18 @@
     # NUMERICAL
     # Capital domain
     MaxK::T = 100.0             # maximum capital level
-    Δk::T = 1e-1                # capital step size
+    Δk::T = 1e-0                # capital step size
     Nk::Int = Int(MaxK/Δk)+1    # number of capital grid points
     k::LinRange{T, Int64} = LinRange(0,MaxK,Nk) # capital grid
 
     # Temporal domain
     T_End::T = 5.00            # End time (measure in years)
     t_save::LinRange{T, Int64} = LinRange(0,T_End,1000)
+
+    # numerical FP/KFE solver (distribution dynamics)
+    Δt::T = 0.025               # time step for FP on [0, T_End] (Nstep is derived)
+    FP_Nstep::Int = Int(ceil(T_End / Δt))  # derived default number of FP steps on [0, T_End]
+    HJB_every::Int = 5          # recompute stationary HJB+wage every HJB_every FP steps (set to 1 for fully coupled)
 
     # numerical HJB solver
     ϵDkUp::T = 1e-8          # safe derivative for V'(k)

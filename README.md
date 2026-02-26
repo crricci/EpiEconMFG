@@ -4,7 +4,9 @@ A Julia implementation of a Mean Field Game (MFG) framework for modeling epidemi
 
 ## Overview
 
-This project solves a system of stationary Hamilton-Jacobi-Bellman (HJB) equations on a capital grid, coupled through an exogenously provided cross-sectional distribution `Ft` (used for aggregates and the infection externality) and an outer fixed point for the competitive wage.
+This project solves a system of stationary Hamilton-Jacobi-Bellman (HJB) equations on a capital grid and a (time-dependent) forward Kolmogorov / Fokker--Planck (FP) equation for the cross-sectional distribution.
+
+Numerically, the distribution is advanced forward in time, while at each distribution update (or every few steps) the code recomputes the stationary HJB policies and the competitive wage fixed point implied by the current distribution.
 
 ### Epidemiological States
 
@@ -25,7 +27,7 @@ The model tracks four epidemiological states:
 
 ## Model Structure
 
-### Solved Stationary System (Implemented)
+### Stationary HJB System (Implemented)
 
 Let $x \in \{S,I,C,R\}$ denote the epidemiological state and $k \in [0, k_{\max}]$ the individual capital state (discretized on a grid).
 
@@ -43,7 +45,7 @@ b_x(k) = (r-\delta)k + \eta_x\,w\,\ell_x(k) - c_x(k) \quad (x\in\{S,I,R\}),
 \qquad b_C(k) = (r-\delta)k - c_C(k).
 $$
 
-`Ft = (ϕSt, ϕIt, ϕCt, ϕRt)` is treated as an input distribution over states and the $k$-grid and is used to compute aggregates and the infection externality.
+`Ft = (ϕSt, ϕIt, ϕCt, ϕRt)` is the cross-sectional distribution over states and the $k$-grid. It is used to compute aggregates and the infection externality, and it can either be treated as an exogenous input (pure stationary solve) or evolved endogenously via the FP equation (dynamic distribution).
 
 #### Controls
 
@@ -119,6 +121,11 @@ Key epidemiological parameters:
 - `μ`: Birth-death rate
 - `αEpi`: Exit rate from containment (C→S, interpreted as death + replacement)
 
+Key FP/KFE numerical parameters:
+- `T_End`: End time for the FP time-marching
+- `Δt`: FP time step (the code uses `Nstep = ceil(T_End/Δt)` and then steps with `Δt_eff = T_End/Nstep`)
+- `HJB_every`: Recompute stationary HJB+wage every `HJB_every` FP steps (set to `1` for fully coupled)
+
 ## Project Structure
 
 ```
@@ -127,9 +134,12 @@ Key epidemiological parameters:
 ├── L_HJBsolver.jl          # Value iteration for HJB equations
 ├── L_wageSolver.jl         # Wage fixed point (uses Roots.jl)
 ├── L_aggregateVariables.jl # Optimal labor + aggregates (K, L)
+├── L_KFEsolver.jl          # Forward Kolmogorov / Fokker--Planck solver (distribution dynamics)
 ├── L_plots.jl              # Visualization utilities
 ├── L_loadAll.jl            # Load all modules
 ├── main.jl                 # Main execution script
+├── DEBUG_HJB.jl            # Regression script for stationary HJB+wage solve
+├── DEBUG_FP.jl             # Regression script for coupled FP time-marching
 ├── Project.toml            # Julia dependencies
 └── Manifest.toml           # Dependency versions
 ```
@@ -158,8 +168,11 @@ p = MFGEpiEcon(Float64)
 V0 = (VS = zeros(p.Nk), VI = zeros(p.Nk), 
       VC = zeros(p.Nk), VR = zeros(p.Nk))
 
-# Solve HJB equations (requires an exogenous distribution Ft)
+# Stationary solve given an exogenous distribution Ft
 V_solution = value_iterationHJB(V0, Ft, p)
+
+# Dynamic distribution: FP time-marching coupled with stationary HJB
+t, Fts, prices = simulate_FP(F0, V0, p)
 ```
 
 ## Numerical Methods
@@ -181,6 +194,85 @@ V_solution = value_iterationHJB(V0, Ft, p)
             to the HJB in state $x$, i.e. off-diagonal entries carry the transition rates $q_{xy}(k_i)$ and diagonal entries carry the total exit rate $\sum_{y\neq x} q_{xy}(k_i)$.
 - **Outer wage fixed point**: Wage is updated from the aggregate mapping implied by `Ft` and current policies with damping.
 - **Boundary state constraints**: The scheme enforces “no drift leaving the domain” at $k=0$ and $k=k_{\max}$ by consistent endpoint control/drift handling.
+
+### Forward Kolmogorov / Fokker--Planck (FP) Time Marching
+
+Given the optimal controls $c^*(t,k,x)$, $\ell^*(t,k,x)$, and $q^*(t,k)$ implied by the stationary HJB at time $t$ (and current prices $w_t,r_t$), the distribution evolves according to the FP system:
+
+\begin{multline}
+\partial_t \phi(t,k,S) = +\mu\big(\phi(t,k,S) + \phi(t,k,I) + \phi(t,k,C) + \phi(t,k,R)\big)
+ + \alpha_{\text{Epi}} \, \phi(t,k,C) - \mu \, \phi(t,k,S) \\
+ - q^*(t,k) \, \phi(t,k,S) - \beta \, \ell^*(t,k,S)\,\phi(t,k,S)\,L_I(t)
+ + \lambda \, \phi(t,k,R)
+ -\partial_k\Big(\phi(t,k,S)\, b_S(t,k)\Big),
+\end{multline}
+
+\begin{multline}
+\partial_t \phi(t,k,I) = -\big(\sigma_1 + \mu + \sigma_3\big)\,\phi(t,k,I)
+ + \beta \, \ell^*(t,k,S)\,\phi(t,k,S)\,L_I(t)
+ -\partial_k\Big(\phi(t,k,I)\, b_I(t,k)\Big),
+\end{multline}
+
+\begin{multline}
+\partial_t \phi(t,k,C) = \sigma_1 \, \phi(t,k,I)
+ - \big(\alpha_{\text{Epi}} + \sigma_2 + \mu\big)\,\phi(t,k,C)
+ -\partial_k\Big(\phi(t,k,C)\, b_C(t,k)\Big),
+\end{multline}
+
+\begin{multline}
+\partial_t \phi(t,k,R) = \sigma_2 \, \phi(t,k,C) + \sigma_3 \, \phi(t,k,I)
+ - \big(\lambda + \mu\big)\,\phi(t,k,R) + q^*(t,k)\,\phi(t,k,S)
+ -\partial_k\Big(\phi(t,k,R)\, b_R(t,k)\Big),
+\end{multline}
+
+with
+$$
+L_I(t) = \int_{\mathbb{R}^+} \ell^*(t,k,I)\,\phi(t,k,I)\,dk,
+$$
+and the capital drifts
+$$
+b_x(t,k) = (r_t-\delta)k + w_t\eta_x\,\ell^*(t,k,x) - c^*(t,k,x) \quad (x\in\{S,I,R\}),
+\qquad
+b_C(t,k) = (r_t-\delta)k - c^*(t,k,C).
+$$
+
+#### FP discretization
+
+The code advances the distribution with implicit Euler (Backward Euler). For a fixed generator $G^n$ at time step $n$ (controls frozen),
+$$
+\phi^{n+1} = (I - \Delta t\,G^n)^{-1}\phi^n.
+$$
+The drift term is discretized in conservative upwind form (finite-volume style) with a no-flux boundary condition consistent with the HJB state constraints, and health-state transitions are applied as local (in $k$) Markov flows.
+
+### Full Coupled Numerical Scheme (FP + HJB + Wage)
+
+The numerical method is a three-level scheme with nested fixed points:
+
+1. **Time marching (FP)**: for $n=0,1,\dots$ advance $F^n \to F^{n+1}$.
+2. **Wage fixed point (at each FP update)**: given $F^n$, solve for the competitive wage $w^n$ by fixed point iteration with damping.
+3. **HJB fixed point (given wage)**: for each candidate wage $w$ inside the wage iteration, solve the stationary HJB via damped value iteration where each step solves
+      $$ (\rho I - A(b) - Q)V = u. $$
+
+Concretely, the algorithm at a time step $n$ looks like:
+
+```text
+Given F^n and initial guesses (V,w):
+
+1) (optional, controlled by HJB_every) Update stationary policies:
+      Repeat until wage converges:
+        a) Solve stationary HJB given current w:
+                   V <- fixed_point_HJB_given_w(F^n, w)
+        b) Compute aggregates from F^n and policies -> implied wage w_implied
+        c) Damped wage update: w <- (1-ωw)*w + ωw*w_implied
+
+2) Build forward generator G^n from (F^n, V, w) and freeze it.
+
+3) Implicit Euler FP step:
+        (I - Δt*G^n) φ^{n+1} = φ^n
+      Unstack φ^{n+1} -> F^{n+1}
+```
+
+For speed, the implementation allows recomputing the stationary HJB+wage only every `HJB_every` FP steps (policies frozen in between); setting `HJB_every = 1` yields the fully coupled version.
 
 ## Dependencies
 
