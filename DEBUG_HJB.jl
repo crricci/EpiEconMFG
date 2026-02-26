@@ -54,11 +54,11 @@ if Vsol !== nothing
     println("DEBUG: ||M*V - rhs||_∞ = $lin_res")
 
     # Wage fixed-point residual at the reported solution
-    ∂VS_log = ∂k_log(Vsol.VS, p.Nk, p.Δk, p.ϵDkUp)
-    ∂VI_log = ∂k_log(Vsol.VI, p.Nk, p.Δk, p.ϵDkUp)
-    ∂VC_log = ∂k_log(Vsol.VC, p.Nk, p.Δk, p.ϵDkUp)
-    ∂VR_log = ∂k_log(Vsol.VR, p.Nk, p.Δk, p.ϵDkUp)
-    ∂V = (∂kVS=∂VS_log, ∂kVI=∂VI_log, ∂kVC=∂VC_log, ∂kVR=∂VR_log)
+    ∂VS_k = ∂k_safe(Vsol.VS, p.Nk, p.Δk, p.ϵDkUp)
+    ∂VI_k = ∂k_safe(Vsol.VI, p.Nk, p.Δk, p.ϵDkUp)
+    ∂VC_k = ∂k_safe(Vsol.VC, p.Nk, p.Δk, p.ϵDkUp)
+    ∂VR_k = ∂k_safe(Vsol.VR, p.Nk, p.Δk, p.ϵDkUp)
+    ∂V = (∂kVS=∂VS_k, ∂kVI=∂VI_k, ∂kVC=∂VC_k, ∂kVR=∂VR_k)
     lOpt, _ = optimal_labor_ALL((VS=Vsol.VS, VI=Vsol.VI, VC=Vsol.VC, VR=Vsol.VR), ∂V, Ft, Vsol.w, p)
     K = aggregate_kapital(Ft, p)
     L = aggregate_labor_supply(lOpt, Ft, p)

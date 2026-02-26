@@ -20,7 +20,7 @@ end
 function compute_FP_policies(V, Ft, p; w, deriv_cache=nothing)
 
     # Derivatives V'(k) with safe floor (same as HJB)
-    ∂V = isnothing(deriv_cache) ? compute_∂V_logs(V, p) : compute_∂V_logs!(deriv_cache, V, p)
+    ∂V = isnothing(deriv_cache) ? compute_∂V_dk(V, p) : compute_∂V_dk!(deriv_cache, V, p)
 
     # Labor, aggregates, and prices
     agg = compute_labor_and_aggregates(V, ∂V, Ft, p; w=w)
@@ -254,7 +254,7 @@ function simulate_FP(F0, V0, p; T_End=p.T_End, Δt=p.Δt, Nstep=nothing, HJB_eve
 
     Vguess = (VS = copy(V0.VS), VI = copy(V0.VI), VC = copy(V0.VC), VR = copy(V0.VR))
 
-    dcache = DerivLogCache(eltype(Vguess.VS), p.Nk)
+    dcache = DerivDkCache(eltype(Vguess.VS), p.Nk)
 
     G = nothing
     Afact = nothing

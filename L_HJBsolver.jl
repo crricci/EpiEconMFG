@@ -18,7 +18,7 @@ function value_iterationHJB_given_wage(V0, Ft, p; w)
 
     w_fixed = w
 
-    dcache = DerivLogCache(eltype(VS), p.Nk)
+    dcache = DerivDkCache(eltype(VS), p.Nk)
     acache = HJBAssemblyCache(eltype(VS), p.Nk)
 
     for it in 1:p.maxitHJBvalue
@@ -73,14 +73,14 @@ function value_iterationHJB_given_wage(V0, Ft, p; w)
     error("Value iteration did not converge in $(p.maxitHJBvalue) iterations.")
 end
 
-mutable struct DerivLogCache{T}
+mutable struct DerivDkCache{T}
     ∂VS::Vector{T}
     ∂VI::Vector{T}
     ∂VC::Vector{T}
     ∂VR::Vector{T}
 end
 
-DerivLogCache(::Type{T}, Nk::Int) where {T} = DerivLogCache(zeros(T, Nk), zeros(T, Nk), zeros(T, Nk), zeros(T, Nk))
+DerivDkCache(::Type{T}, Nk::Int) where {T} = DerivDkCache(zeros(T, Nk), zeros(T, Nk), zeros(T, Nk), zeros(T, Nk))
 
 mutable struct HJBAssemblyCache{T}
     I::Vector{Int}
@@ -94,20 +94,20 @@ function HJBAssemblyCache(::Type{T}, Nk::Int) where {T}
     return HJBAssemblyCache(Int[], Int[], T[], zeros(T, n))
 end
 
-function compute_∂V_logs!(cache::DerivLogCache, V, p)
-    ∂k_log!(cache.∂VS, V.VS, p.Nk, p.Δk, p.ϵDkUp)
-    ∂k_log!(cache.∂VI, V.VI, p.Nk, p.Δk, p.ϵDkUp)
-    ∂k_log!(cache.∂VC, V.VC, p.Nk, p.Δk, p.ϵDkUp)
-    ∂k_log!(cache.∂VR, V.VR, p.Nk, p.Δk, p.ϵDkUp)
+function compute_∂V_dk!(cache::DerivDkCache, V, p)
+    ∂k_safe!(cache.∂VS, V.VS, p.Nk, p.Δk, p.ϵDkUp)
+    ∂k_safe!(cache.∂VI, V.VI, p.Nk, p.Δk, p.ϵDkUp)
+    ∂k_safe!(cache.∂VC, V.VC, p.Nk, p.Δk, p.ϵDkUp)
+    ∂k_safe!(cache.∂VR, V.VR, p.Nk, p.Δk, p.ϵDkUp)
     return (∂kVS=cache.∂VS, ∂kVI=cache.∂VI, ∂kVC=cache.∂VC, ∂kVR=cache.∂VR)
 end
 
-function compute_∂V_logs(V, p)
-    ∂VS_log = ∂k_log(V.VS, p.Nk, p.Δk, p.ϵDkUp)
-    ∂VI_log = ∂k_log(V.VI, p.Nk, p.Δk, p.ϵDkUp)
-    ∂VC_log = ∂k_log(V.VC, p.Nk, p.Δk, p.ϵDkUp)
-    ∂VR_log = ∂k_log(V.VR, p.Nk, p.Δk, p.ϵDkUp)
-    return (∂kVS=∂VS_log, ∂kVI=∂VI_log, ∂kVC=∂VC_log, ∂kVR=∂VR_log)
+function compute_∂V_dk(V, p)
+    ∂VS_k = ∂k_safe(V.VS, p.Nk, p.Δk, p.ϵDkUp)
+    ∂VI_k = ∂k_safe(V.VI, p.Nk, p.Δk, p.ϵDkUp)
+    ∂VC_k = ∂k_safe(V.VC, p.Nk, p.Δk, p.ϵDkUp)
+    ∂VR_k = ∂k_safe(V.VR, p.Nk, p.Δk, p.ϵDkUp)
+    return (∂kVS=∂VS_k, ∂kVI=∂VI_k, ∂kVC=∂VC_k, ∂kVR=∂VR_k)
 end
 
 function compute_labor_and_aggregates(V, ∂V, Ft, p; w, K=nothing)
@@ -127,7 +127,7 @@ function value_iterationHJB(V0, Ft, p)
     w = p.w_start
     K = aggregate_kapital(Ft, p)
 
-    dcache = DerivLogCache(eltype(V.VS), p.Nk)
+    dcache = DerivDkCache(eltype(V.VS), p.Nk)
 
     for itw in 1:p.maxitWage
 
@@ -137,7 +137,7 @@ function value_iterationHJB(V0, Ft, p)
         V = value_iterationHJB_given_wage(V, Ft, p; w = w)
 
         # 2) Update wage using implied aggregate wage mapping
-        ∂V = compute_∂V_logs!(dcache, V, p)
+        ∂V = compute_∂V_dk!(dcache, V, p)
         agg = compute_labor_and_aggregates(V, ∂V, Ft, p; w=w, K=K)
         lOpt = agg.lOpt
         L = agg.L
@@ -174,12 +174,12 @@ function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cac
     # Unpack value functions
     VS = V.VS; VI = V.VI; VC = V.VC; VR = V.VR;
 
-    # Compute derivatives V'(k). Safe log-derivative
-    ∂V = isnothing(deriv_cache) ? compute_∂V_logs(V, p) : compute_∂V_logs!(deriv_cache, V, p)
-    ∂VS_log = ∂V.∂kVS
-    ∂VI_log = ∂V.∂kVI
-    ∂VC_log = ∂V.∂kVC
-    ∂VR_log = ∂V.∂kVR
+    # Compute derivatives V'(k) with a positive floor for numerical stability.
+    ∂V = isnothing(deriv_cache) ? compute_∂V_dk(V, p) : compute_∂V_dk!(deriv_cache, V, p)
+    ∂VS_k = ∂V.∂kVS
+    ∂VI_k = ∂V.∂kVI
+    ∂VC_k = ∂V.∂kVC
+    ∂VR_k = ∂V.∂kVR
 
     # Use the provided wage guess inside the HJB operator; update it outside with damping.
     w = isfinite(w0) ? max(w0, p.ϵDkUp) : max(p.w_start, p.ϵDkUp)
@@ -209,10 +209,10 @@ function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cac
     capital_income = (r - p.δ) .* p.k
 
     # Optimal consumption from FOC: u_c = θ/c = V'(k)  =>  c = θ / V'(k)
-    cS = p.θ ./ ∂VS_log
-    cI = p.θ ./ ∂VI_log
-    cC = p.θ ./ ∂VC_log
-    cR = p.θ ./ ∂VR_log
+    cS = p.θ ./ ∂VS_k
+    cI = p.θ ./ ∂VI_k
+    cC = p.θ ./ ∂VC_k
+    cR = p.θ ./ ∂VR_k
 
     # State-constraints at the boundaries must be enforced on controls (not just by clipping drift).
     # At k = 0, require b >= 0  =>  c <= income.
@@ -288,7 +288,10 @@ function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cac
         return nothing
     end
 
-    function add_drift_entries!(row, i, b_i)
+    # Upwind (Godunov/flux-splitting) discretization for the drift term.
+    # Given b_i (drift at node i) this adds the tri-diagonal entries corresponding to
+    # a first-order upwind approximation based on b_i^+ and b_i^-.
+    function add_upwind_drift_entries!(row, i, b_i)
         bplus = max(b_i, 0.0)
         bminus = min(b_i, 0.0)
         aL = bplus / Δk
@@ -313,7 +316,7 @@ function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cac
         rowS = idx(1, i)
         outS = infection_rate[i] + v_rate[i]
         push_entry!(rowS, rowS, p.ρ + outS)
-        add_drift_entries!(rowS, i, -bS[i])
+        add_upwind_drift_entries!(rowS, i, -bS[i])
         push_entry!(rowS, idx(2, i), -infection_rate[i])
         push_entry!(rowS, idx(4, i), -v_rate[i])
         rhs[rowS] = uS[i]
@@ -321,7 +324,7 @@ function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cac
         # I row
         rowI = idx(2, i)
         push_entry!(rowI, rowI, p.ρ + exitI)
-        add_drift_entries!(rowI, i, -bI[i])
+        add_upwind_drift_entries!(rowI, i, -bI[i])
         push_entry!(rowI, idx(1, i), -p.μ)
         push_entry!(rowI, idx(3, i), -p.σ1)
         push_entry!(rowI, idx(4, i), -p.σ3)
@@ -330,7 +333,7 @@ function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cac
         # C row
         rowC = idx(3, i)
         push_entry!(rowC, rowC, p.ρ + exitC)
-        add_drift_entries!(rowC, i, -bC[i])
+        add_upwind_drift_entries!(rowC, i, -bC[i])
         push_entry!(rowC, idx(1, i), -(p.αEpi + p.μ))
         push_entry!(rowC, idx(4, i), -p.σ2)
         rhs[rowC] = uC[i]
@@ -338,7 +341,7 @@ function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cac
         # R row
         rowR = idx(4, i)
         push_entry!(rowR, rowR, p.ρ + exitR)
-        add_drift_entries!(rowR, i, -bR[i])
+        add_upwind_drift_entries!(rowR, i, -bR[i])
         push_entry!(rowR, idx(1, i), -exitR)
         rhs[rowR] = uR[i]
     end

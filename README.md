@@ -178,7 +178,7 @@ t, Fts, prices = simulate_FP(F0, V0, p)
 ## Numerical Methods
 
 ### Finite Differences
-- **Derivative approximation**: `∂k_log` computes a central-difference approximation of $V'(k)$ and floors it away from zero.
+- **Derivative approximation**: `∂k_safe` computes a central-difference approximation of $V'(k)$ and floors it away from zero.
 - **Advection term**: The capital drift term $b(k)\,V'(k)$ is discretized with an upwind stencil based on the sign of the drift.
 
 ### HJB Solve and Fixed Points
@@ -246,24 +246,22 @@ The numerical method is a three-level scheme with nested fixed points:
 3. **HJB fixed point (given wage)**: for each candidate wage $w$ inside the wage iteration, solve the stationary HJB via damped value iteration where each step solves
       $$ (\rho I - A(b) - Q)V = u. $$
 
-Concretely, the algorithm at a time step $n$ looks like:
+Concretely, at time step $n$ the code does:
 
-```text
-Given F^n and initial guesses (V,w):
+1. **(Optional) Update stationary policies**, controlled by `HJB_every`.
+      Given $F^n$, solve the stationary equilibrium (wage fixed point + stationary HJB) to obtain $V$ and policies.
+      Inside the wage fixed point, with wage iterate $w$ and implied wage $w^{\mathrm{imp}}$, update using damping
+      $$
+      w \leftarrow (1-\omega_w)\,w + \omega_w\,w^{\mathrm{imp}}.
+      $$
 
-1) (optional, controlled by HJB_every) Update stationary policies:
-      Repeat until wage converges:
-        a) Solve stationary HJB given current w:
-                   V <- fixed_point_HJB_given_w(F^n, w)
-        b) Compute aggregates from F^n and policies -> implied wage w_implied
-        c) Damped wage update: w <- (1-ωw)*w + ωw*w_implied
+2. **Build and freeze the forward generator** $G^n$ from $(F^n, V, w)$.
 
-2) Build forward generator G^n from (F^n, V, w) and freeze it.
-
-3) Implicit Euler FP step:
-        (I - Δt*G^n) φ^{n+1} = φ^n
-      Unstack φ^{n+1} -> F^{n+1}
-```
+3. **Implicit Euler FP step** (Backward Euler): solve
+      $$
+      (I - \Delta t\,G^n)\,\phi^{n+1} = \phi^n,
+      $$
+      and unstack $\phi^{n+1}$ into $F^{n+1}$.
 
 For speed, the implementation allows recomputing the stationary HJB+wage only every `HJB_every` FP steps (policies frozen in between); setting `HJB_every = 1` yields the fully coupled version.
 
