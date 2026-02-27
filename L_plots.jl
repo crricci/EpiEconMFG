@@ -49,12 +49,42 @@ function _finite_minmax(M)
 	return lo, hi
 end
 
+function _format_sci(x::Real; sigdigits::Int = 2)
+	v = Float64(x)
+	if !isfinite(v)
+		return "NaN"
+	end
+	if v == 0.0
+		return "0"
+	end
+	ax = abs(v)
+	exp10 = floor(Int, log10(ax))
+	mant = v / (10.0 ^ exp10)
+	# keep a short mantissa; use general format so 3.40 -> 3.4
+	mant_str = string(round(mant; sigdigits = sigdigits))
+	return string(mant_str, "*10^", exp10)
+end
+
+function _default_contour_labelformatter(level)
+	v = Float64(level)
+	if v == 0.0
+		return "0"
+	end
+	av = abs(v)
+	# Scientific notation for small/large values; otherwise plain.
+	if av < 1e-2 || av >= 1e3
+		return _format_sci(v)
+	end
+	return string(round(v; sigdigits = 3))
+end
+
 function _heatmap_with_contours!(ax, t, k, Z_tk;
 	colormap = :viridis,
 	colorrange,
 	contour_lines::Int = 6,
 	contour_labels::Bool = true,
 	contour_labelsize = 9,
+	contour_labelformatter = _default_contour_labelformatter,
 	contour_color = :black,
 	contour_linewidth = 0.6,
 )
@@ -73,6 +103,7 @@ function _heatmap_with_contours!(ax, t, k, Z_tk;
 				labels = contour_labels,
 				labelsize = contour_labelsize,
 				labelcolor = contour_color,
+				labelformatter = contour_labelformatter,
 			)
 		catch
 			# Makie can error when labels are requested but no contour segments exist.
