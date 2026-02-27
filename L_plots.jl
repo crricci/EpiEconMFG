@@ -34,10 +34,24 @@ function _safe_colorrange(lo, hi)
 	return (Float64(lo), Float64(lo + δ))
 end
 
+function _log10_matrix(Z; floor::Float64 = 1e-16)
+	T = Float64
+	Zf = Matrix{T}(undef, size(Z, 1), size(Z, 2))
+	@inbounds for j in axes(Z, 2)
+		for i in axes(Z, 1)
+			v = Float64(Z[i, j])
+			Zf[i, j] = log10(max(v, floor))
+		end
+	end
+	return Zf
+end
+
 function _heatmap_with_contours!(ax, t, k, Z_tk;
 	colormap = :viridis,
 	colorrange,
 	contour_lines::Int = 6,
+	contour_labels::Bool = true,
+	contour_labelsize = 10,
 	contour_color = :black,
 	contour_linewidth = 0.6,
 )
@@ -45,7 +59,13 @@ function _heatmap_with_contours!(ax, t, k, Z_tk;
 	lo, hi = colorrange
 	if contour_lines > 0 && isfinite(lo) && isfinite(hi) && (hi > lo)
 		levels = range(lo, hi; length = contour_lines + 2)[2:end-1]
-		CairoMakie.contour!(ax, t, k, Z_tk; levels = levels, color = contour_color, linewidth = contour_linewidth)
+		CairoMakie.contour!(ax, t, k, Z_tk;
+			levels = levels,
+			color = contour_color,
+			linewidth = contour_linewidth,
+			labels = contour_labels,
+			labelsize = contour_labelsize,
+		)
 	end
 	return hm
 end
@@ -78,11 +98,11 @@ function save_figure_1_totals(result, p;
 	end
 
 	fig = CairoMakie.Figure(size = (900, 450))
-	ax = CairoMakie.Axis(fig[1, 1], xlabel = "t", ylabel = "mass")
-	CairoMakie.lines!(ax, t, S_tot, label = "S")
-	CairoMakie.lines!(ax, t, I_tot, label = "I")
-	CairoMakie.lines!(ax, t, C_tot, label = "C")
-	CairoMakie.lines!(ax, t, R_tot, label = "R")
+	ax = CairoMakie.Axis(fig[1, 1], xlabel = "t", ylabel = "Population share")
+	CairoMakie.lines!(ax, t, S_tot, label = "Susceptible")
+	CairoMakie.lines!(ax, t, I_tot, label = "Infected")
+	CairoMakie.lines!(ax, t, C_tot, label = "Contained")
+	CairoMakie.lines!(ax, t, R_tot, label = "Recovered")
 	CairoMakie.axislegend(ax, position = :rt)
 	CairoMakie.save(joinpath(outdir, filename), fig)
 	return nothing
@@ -111,22 +131,26 @@ function save_figure_2_distributions(result, p;
 	ΦC = _time_by_k_matrix(n -> result.F[n].ϕCt, Nt, Nk)
 	ΦR = _time_by_k_matrix(n -> result.F[n].ϕRt, Nt, Nk)
 
-	ϕ_hi = maximum((maximum(ΦS), maximum(ΦI), maximum(ΦC), maximum(ΦR)))
-	clims_ϕ = _safe_colorrange(0.0, ϕ_hi)
+	ΦS_log = _log10_matrix(ΦS)
+	ΦI_log = _log10_matrix(ΦI)
+	ΦC_log = _log10_matrix(ΦC)
+	ΦR_log = _log10_matrix(ΦR)
+	loϕ, hiϕ = _global_minmax(ΦS_log, ΦI_log, ΦC_log, ΦR_log)
+	clims_ϕ = _safe_colorrange(loϕ, hiϕ)
 
 	fig = CairoMakie.Figure(size = (1200, 800))
 	grid = CairoMakie.GridLayout()
 	fig[1, 1] = grid
 
-	axS = CairoMakie.Axis(grid[1, 1], title = "S(t,k)", xlabel = "t", ylabel = "k")
-	axI = CairoMakie.Axis(grid[1, 2], title = "I(t,k)", xlabel = "t", ylabel = "k")
-	axC = CairoMakie.Axis(grid[2, 1], title = "C(t,k)", xlabel = "t", ylabel = "k")
-	axR = CairoMakie.Axis(grid[2, 2], title = "R(t,k)", xlabel = "t", ylabel = "k")
+	axS = CairoMakie.Axis(grid[1, 1], title = "log10 S(t,k)", xlabel = "t", ylabel = "k")
+	axI = CairoMakie.Axis(grid[1, 2], title = "log10 I(t,k)", xlabel = "t", ylabel = "k")
+	axC = CairoMakie.Axis(grid[2, 1], title = "log10 C(t,k)", xlabel = "t", ylabel = "k")
+	axR = CairoMakie.Axis(grid[2, 2], title = "log10 R(t,k)", xlabel = "t", ylabel = "k")
 
-	hmS = _heatmap_with_contours!(axS, t, k, ΦS; colormap = :viridis, colorrange = clims_ϕ, contour_lines = contour_lines)
-	_heatmap_with_contours!(axI, t, k, ΦI; colormap = :viridis, colorrange = clims_ϕ, contour_lines = contour_lines)
-	_heatmap_with_contours!(axC, t, k, ΦC; colormap = :viridis, colorrange = clims_ϕ, contour_lines = contour_lines)
-	_heatmap_with_contours!(axR, t, k, ΦR; colormap = :viridis, colorrange = clims_ϕ, contour_lines = contour_lines)
+	hmS = _heatmap_with_contours!(axS, t, k, ΦS_log; colormap = :viridis, colorrange = clims_ϕ, contour_lines = contour_lines)
+	_heatmap_with_contours!(axI, t, k, ΦI_log; colormap = :viridis, colorrange = clims_ϕ, contour_lines = contour_lines)
+	_heatmap_with_contours!(axC, t, k, ΦC_log; colormap = :viridis, colorrange = clims_ϕ, contour_lines = contour_lines)
+	_heatmap_with_contours!(axR, t, k, ΦR_log; colormap = :viridis, colorrange = clims_ϕ, contour_lines = contour_lines)
 
 	CairoMakie.Colorbar(fig[1, 2], hmS)
 	CairoMakie.save(joinpath(outdir, filename), fig)
@@ -152,12 +176,13 @@ function save_figure_3_flux_S_to_I(result, p;
 	end
 
 	FluxSI = _time_by_k_matrix(n -> (result.controls[n].infection_rate .* result.F[n].ϕSt), Nt, Nk)
-	flux_hi = maximum(FluxSI)
-	clims_flux = _safe_colorrange(0.0, flux_hi)
+	FluxSI_log = _log10_matrix(FluxSI)
+	loF, hiF = _global_minmax(FluxSI_log)
+	clims_flux = _safe_colorrange(loF, hiF)
 
 	fig = CairoMakie.Figure(size = (1100, 650))
-	ax = CairoMakie.Axis(fig[1, 1], title = "Flow S→I: β lS*(t,k) ϕS(t,k) LI(t)", xlabel = "t", ylabel = "k")
-	hm = _heatmap_with_contours!(ax, t, k, FluxSI; colormap = :viridis, colorrange = clims_flux, contour_lines = contour_lines)
+	ax = CairoMakie.Axis(fig[1, 1], title = "log10 Flow S→I: β lS*(t,k) ϕS(t,k) LI(t)", xlabel = "t", ylabel = "k")
+	hm = _heatmap_with_contours!(ax, t, k, FluxSI_log; colormap = :viridis, colorrange = clims_flux, contour_lines = contour_lines)
 	CairoMakie.Colorbar(fig[1, 2], hm)
 	CairoMakie.save(joinpath(outdir, filename), fig)
 	return nothing
