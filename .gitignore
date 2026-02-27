@@ -1,0 +1,8 @@
+.vscode
+
+# Generated outputs
+figures/
+
+# macOS
+.DS_Store
+**/.DS_Store
