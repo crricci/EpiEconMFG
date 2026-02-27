@@ -23,43 +23,48 @@ function _global_minmax(mats...)
 	return lo, hi
 end
 
-"""
-	save_all_figures(result, p; outdir="figures")
+function _safe_colorrange(lo, hi)
+	if !(isfinite(lo) && isfinite(hi))
+		return (0.0, 1.0)
+	end
+	if hi > lo
+		return (Float64(lo), Float64(hi))
+	end
+	δ = eps(Float64(max(abs(lo), 1.0)))
+	return (Float64(lo), Float64(lo + δ))
+end
 
-Generate and save a set of PDF figures from the output of `solveModel`.
+function _heatmap_with_contours!(ax, t, k, Z_tk;
+	colormap = :viridis,
+	colorrange,
+	contour_lines::Int = 6,
+	contour_color = :black,
+	contour_linewidth = 0.6,
+)
+	hm = CairoMakie.heatmap!(ax, t, k, Z_tk; colormap = colormap, colorrange = colorrange)
+	lo, hi = colorrange
+	if contour_lines > 0 && isfinite(lo) && isfinite(hi) && (hi > lo)
+		levels = range(lo, hi; length = contour_lines + 2)[2:end-1]
+		CairoMakie.contour!(ax, t, k, Z_tk; levels = levels, color = contour_color, linewidth = contour_linewidth)
+	end
+	return hm
+end
 
-Input
-- `result`: the `NamedTuple` returned by `solveModel` (fields `t`, `F`, `V`, `controls`).
-- `p`: model parameters (`MFGEpiEcon`), used for the capital grid `p.k`, spacing `p.Δk`, and
-  parameters like `p.β` and `p.qMax`.
-
-Output
-- Writes PDF files into `outdir`.
-
-Figures saved (as separate PDFs):
-1. Totals over time for S/I/C/R (integrated over k).
-2. Heatmaps of S(t,k), I(t,k), C(t,k), R(t,k) with a shared colorscale.
-3. Heatmap of S→I flow: β * lS*(t,k) * ϕS(t,k) * LI(t).
-4. Heatmaps of optimal consumption cS/cI/cC/cR with a shared colorscale.
-5. Heatmaps of optimal labor lS/lI/lR with a shared colorscale.
-6. Heatmap of vaccination intensity q(t,k).
-"""
-function save_all_figures(result, p; outdir::AbstractString = "figures")
+function save_figure_1_totals(result, p;
+	outdir::AbstractString = "figures",
+	filename::AbstractString = "figure_1_totals_SICR_over_time.pdf",
+)
 	mkpath(outdir)
 
 	t = result.t
 	Nt = length(t)
-	Nk = p.Nk
-	k = collect(p.k)
-
 	if Nt == 0
 		error("result.t is empty")
 	end
-	if length(result.F) != Nt || length(result.controls) != Nt
-		error("Inconsistent result lengths: length(t)=$Nt, length(F)=$(length(result.F)), length(controls)=$(length(result.controls))")
+	if length(result.F) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(F)=$(length(result.F))")
 	end
 
-	# ---------- 1) Totals over time (integrate over k)
 	S_tot = zeros(Float64, Nt)
 	I_tot = zeros(Float64, Nt)
 	C_tot = zeros(Float64, Nt)
@@ -79,80 +84,223 @@ function save_all_figures(result, p; outdir::AbstractString = "figures")
 	CairoMakie.lines!(ax, t, C_tot, label = "C")
 	CairoMakie.lines!(ax, t, R_tot, label = "R")
 	CairoMakie.axislegend(ax, position = :rt)
-	CairoMakie.save(joinpath(outdir, "01_totals_SICR_over_time.pdf"), fig)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
 
-	# Helper to save a single heatmap
-	function save_heatmap_pdf(filename::AbstractString, Z_tk;
-		title::AbstractString,
-		colorrange,
-		colormap = :viridis,
-		xlabel::AbstractString = "t",
-		ylabel::AbstractString = "k")
+function save_figure_2_distributions(result, p;
+	outdir::AbstractString = "figures",
+	filename::AbstractString = "figure_2_heatmaps_distributions_SICR_tk.pdf",
+	contour_lines::Int = 6,
+)
+	mkpath(outdir)
 
-		f = CairoMakie.Figure(size = (900, 600))
-		a = CairoMakie.Axis(f[1, 1], xlabel = xlabel, ylabel = ylabel, title = title)
-		hm = CairoMakie.heatmap!(a, t, k, Z_tk; colormap = colormap, colorrange = colorrange)
-		CairoMakie.Colorbar(f[1, 2], hm)
-		CairoMakie.save(joinpath(outdir, filename), f)
-		return nothing
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	k = collect(p.k)
+	if Nt == 0
+		error("result.t is empty")
+	end
+	if length(result.F) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(F)=$(length(result.F))")
 	end
 
-	# ---------- 2) Distributions S/I/C/R heatmaps (shared colorscale)
 	ΦS = _time_by_k_matrix(n -> result.F[n].ϕSt, Nt, Nk)
 	ΦI = _time_by_k_matrix(n -> result.F[n].ϕIt, Nt, Nk)
 	ΦC = _time_by_k_matrix(n -> result.F[n].ϕCt, Nt, Nk)
 	ΦR = _time_by_k_matrix(n -> result.F[n].ϕRt, Nt, Nk)
 
 	ϕ_hi = maximum((maximum(ΦS), maximum(ΦI), maximum(ΦC), maximum(ΦR)))
-	clims_ϕ = (0.0, ϕ_hi)
+	clims_ϕ = _safe_colorrange(0.0, ϕ_hi)
 
-	save_heatmap_pdf("02_heatmap_S_tk.pdf", ΦS; title = "S(t,k)", colorrange = clims_ϕ)
-	save_heatmap_pdf("03_heatmap_I_tk.pdf", ΦI; title = "I(t,k)", colorrange = clims_ϕ)
-	save_heatmap_pdf("04_heatmap_C_tk.pdf", ΦC; title = "C(t,k)", colorrange = clims_ϕ)
-	save_heatmap_pdf("05_heatmap_R_tk.pdf", ΦR; title = "R(t,k)", colorrange = clims_ϕ)
+	fig = CairoMakie.Figure(size = (1200, 800))
+	grid = CairoMakie.GridLayout()
+	fig[1, 1] = grid
 
-	# ---------- 3) Flow S -> I: β * lS*(t,k) * ϕS(t,k) * LI(t)
+	axS = CairoMakie.Axis(grid[1, 1], title = "S(t,k)", xlabel = "t", ylabel = "k")
+	axI = CairoMakie.Axis(grid[1, 2], title = "I(t,k)", xlabel = "t", ylabel = "k")
+	axC = CairoMakie.Axis(grid[2, 1], title = "C(t,k)", xlabel = "t", ylabel = "k")
+	axR = CairoMakie.Axis(grid[2, 2], title = "R(t,k)", xlabel = "t", ylabel = "k")
+
+	hmS = _heatmap_with_contours!(axS, t, k, ΦS; colormap = :viridis, colorrange = clims_ϕ, contour_lines = contour_lines)
+	_heatmap_with_contours!(axI, t, k, ΦI; colormap = :viridis, colorrange = clims_ϕ, contour_lines = contour_lines)
+	_heatmap_with_contours!(axC, t, k, ΦC; colormap = :viridis, colorrange = clims_ϕ, contour_lines = contour_lines)
+	_heatmap_with_contours!(axR, t, k, ΦR; colormap = :viridis, colorrange = clims_ϕ, contour_lines = contour_lines)
+
+	CairoMakie.Colorbar(fig[1, 2], hmS)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
+function save_figure_3_flux_S_to_I(result, p;
+	outdir::AbstractString = "figures",
+	filename::AbstractString = "figure_3_heatmap_flux_S_to_I_tk.pdf",
+	contour_lines::Int = 6,
+)
+	mkpath(outdir)
+
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	k = collect(p.k)
+	if Nt == 0
+		error("result.t is empty")
+	end
+	if length(result.F) != Nt || length(result.controls) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(F)=$(length(result.F)), length(controls)=$(length(result.controls))")
+	end
+
 	FluxSI = _time_by_k_matrix(n -> (result.controls[n].infection_rate .* result.F[n].ϕSt), Nt, Nk)
 	flux_hi = maximum(FluxSI)
-	save_heatmap_pdf(
-		"06_heatmap_flux_S_to_I_tk.pdf",
-		FluxSI;
-		title = "Flow S→I: β lS*(t,k) ϕS(t,k) LI(t)",
-		colorrange = (0.0, flux_hi),
-	)
+	clims_flux = _safe_colorrange(0.0, flux_hi)
 
-	# ---------- 4) Consumption heatmaps (shared colorscale)
+	fig = CairoMakie.Figure(size = (1100, 650))
+	ax = CairoMakie.Axis(fig[1, 1], title = "Flow S→I: β lS*(t,k) ϕS(t,k) LI(t)", xlabel = "t", ylabel = "k")
+	hm = _heatmap_with_contours!(ax, t, k, FluxSI; colormap = :viridis, colorrange = clims_flux, contour_lines = contour_lines)
+	CairoMakie.Colorbar(fig[1, 2], hm)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
+function save_figure_4_consumption(result, p;
+	outdir::AbstractString = "figures",
+	filename::AbstractString = "figure_4_heatmaps_consumption_SICR_tk.pdf",
+	contour_lines::Int = 6,
+)
+	mkpath(outdir)
+
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	k = collect(p.k)
+	if Nt == 0
+		error("result.t is empty")
+	end
+	if length(result.controls) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(controls)=$(length(result.controls))")
+	end
+
 	CS = _time_by_k_matrix(n -> result.controls[n].cS, Nt, Nk)
 	CI = _time_by_k_matrix(n -> result.controls[n].cI, Nt, Nk)
 	CC = _time_by_k_matrix(n -> result.controls[n].cC, Nt, Nk)
 	CR = _time_by_k_matrix(n -> result.controls[n].cR, Nt, Nk)
+
 	c_lo, c_hi = _global_minmax(CS, CI, CC, CR)
-	clims_c = (c_lo, c_hi)
+	clims_c = _safe_colorrange(c_lo, c_hi)
 
-	save_heatmap_pdf("07_heatmap_cS_tk.pdf", CS; title = "Consumption cS(t,k)", colorrange = clims_c, colormap = :plasma)
-	save_heatmap_pdf("08_heatmap_cI_tk.pdf", CI; title = "Consumption cI(t,k)", colorrange = clims_c, colormap = :plasma)
-	save_heatmap_pdf("09_heatmap_cC_tk.pdf", CC; title = "Consumption cC(t,k)", colorrange = clims_c, colormap = :plasma)
-	save_heatmap_pdf("10_heatmap_cR_tk.pdf", CR; title = "Consumption cR(t,k)", colorrange = clims_c, colormap = :plasma)
+	fig = CairoMakie.Figure(size = (1200, 800))
+	grid = CairoMakie.GridLayout()
+	fig[1, 1] = grid
 
-	# ---------- 5) Labor heatmaps (shared colorscale, C is always 0 so omitted)
+	axS = CairoMakie.Axis(grid[1, 1], title = "cS(t,k)", xlabel = "t", ylabel = "k")
+	axI = CairoMakie.Axis(grid[1, 2], title = "cI(t,k)", xlabel = "t", ylabel = "k")
+	axC = CairoMakie.Axis(grid[2, 1], title = "cC(t,k)", xlabel = "t", ylabel = "k")
+	axR = CairoMakie.Axis(grid[2, 2], title = "cR(t,k)", xlabel = "t", ylabel = "k")
+
+	hmS = _heatmap_with_contours!(axS, t, k, CS; colormap = :plasma, colorrange = clims_c, contour_lines = contour_lines)
+	_heatmap_with_contours!(axI, t, k, CI; colormap = :plasma, colorrange = clims_c, contour_lines = contour_lines)
+	_heatmap_with_contours!(axC, t, k, CC; colormap = :plasma, colorrange = clims_c, contour_lines = contour_lines)
+	_heatmap_with_contours!(axR, t, k, CR; colormap = :plasma, colorrange = clims_c, contour_lines = contour_lines)
+
+	CairoMakie.Colorbar(fig[1, 2], hmS)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
+function save_figure_5_labor(result, p;
+	outdir::AbstractString = "figures",
+	filename::AbstractString = "figure_5_heatmaps_labor_SIR_tk.pdf",
+	contour_lines::Int = 6,
+)
+	mkpath(outdir)
+
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	k = collect(p.k)
+	if Nt == 0
+		error("result.t is empty")
+	end
+	if length(result.controls) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(controls)=$(length(result.controls))")
+	end
+
 	LS = _time_by_k_matrix(n -> result.controls[n].lOpt.lS, Nt, Nk)
 	LI = _time_by_k_matrix(n -> result.controls[n].lOpt.lI, Nt, Nk)
 	LR = _time_by_k_matrix(n -> result.controls[n].lOpt.lR, Nt, Nk)
 	clims_l = (0.0, 1.0)
 
-	save_heatmap_pdf("11_heatmap_lS_tk.pdf", LS; title = "Labor lS(t,k)", colorrange = clims_l, colormap = :viridis)
-	save_heatmap_pdf("12_heatmap_lI_tk.pdf", LI; title = "Labor lI(t,k)", colorrange = clims_l, colormap = :viridis)
-	save_heatmap_pdf("13_heatmap_lR_tk.pdf", LR; title = "Labor lR(t,k)", colorrange = clims_l, colormap = :viridis)
+	fig = CairoMakie.Figure(size = (1400, 500))
+	grid = CairoMakie.GridLayout()
+	fig[1, 1] = grid
 
-	# ---------- 6) Vaccination intensity q(t,k)
+	axS = CairoMakie.Axis(grid[1, 1], title = "lS(t,k)", xlabel = "t", ylabel = "k")
+	axI = CairoMakie.Axis(grid[1, 2], title = "lI(t,k)", xlabel = "t", ylabel = "k")
+	axR = CairoMakie.Axis(grid[1, 3], title = "lR(t,k)", xlabel = "t", ylabel = "k")
+
+	hmS = _heatmap_with_contours!(axS, t, k, LS; colormap = :viridis, colorrange = clims_l, contour_lines = contour_lines)
+	_heatmap_with_contours!(axI, t, k, LI; colormap = :viridis, colorrange = clims_l, contour_lines = contour_lines)
+	_heatmap_with_contours!(axR, t, k, LR; colormap = :viridis, colorrange = clims_l, contour_lines = contour_lines)
+
+	CairoMakie.Colorbar(fig[1, 2], hmS)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
+function save_figure_6_vaccination_q(result, p;
+	outdir::AbstractString = "figures",
+	filename::AbstractString = "figure_6_heatmap_q_tk.pdf",
+	contour_lines::Int = 6,
+)
+	mkpath(outdir)
+
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	k = collect(p.k)
+	if Nt == 0
+		error("result.t is empty")
+	end
+	if length(result.controls) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(controls)=$(length(result.controls))")
+	end
+
 	Q = _time_by_k_matrix(n -> result.controls[n].q_rate, Nt, Nk)
-	save_heatmap_pdf(
-		"14_heatmap_q_tk.pdf",
-		Q;
-		title = "Vaccination intensity q(t,k)",
-		colorrange = (0.0, p.qMax),
-		colormap = :magma,
-	)
+	q_hi = maximum(Q)
+	clims_q = _safe_colorrange(0.0, q_hi)
+
+	fig = CairoMakie.Figure(size = (1100, 650))
+	ax = CairoMakie.Axis(fig[1, 1], title = "Vaccination intensity q(t,k)", xlabel = "t", ylabel = "k")
+	hm = _heatmap_with_contours!(ax, t, k, Q; colormap = :magma, colorrange = clims_q, contour_lines = contour_lines)
+	CairoMakie.Colorbar(fig[1, 2], hm)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
+"""
+	save_all_figures(result, p; outdir="figures", contour_lines=6)
+
+Generate and save a set of PDF figures from the output of `solveModel`.
+
+Each figure is produced by a separate `save_figure_*` function.
+
+Output filenames use the `figure_#_...` prefix (e.g. `figure_1_...`).
+Heatmaps are grouped into multi-panel figures (2×2 or 1×3) and include a few
+contour lines overlaid to improve readability.
+"""
+function save_all_figures(result, p;
+	outdir::AbstractString = "figures",
+	contour_lines::Int = 6,
+)
+	mkpath(outdir)
+
+	save_figure_1_totals(result, p; outdir = outdir)
+	save_figure_2_distributions(result, p; outdir = outdir, contour_lines = contour_lines)
+	save_figure_3_flux_S_to_I(result, p; outdir = outdir, contour_lines = contour_lines)
+	save_figure_4_consumption(result, p; outdir = outdir, contour_lines = contour_lines)
+	save_figure_5_labor(result, p; outdir = outdir, contour_lines = contour_lines)
+	save_figure_6_vaccination_q(result, p; outdir = outdir, contour_lines = contour_lines)
 
 	return nothing
 end
