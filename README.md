@@ -88,7 +88,7 @@ Let `ϕ_e(t,k)` be the cross-sectional density in state `e`.
 
 For `S`:
 
-$$
+```math
 \partial_t \phi_S
 = \mu(\phi_S+\phi_I+\phi_C+\phi_R)
 + \alpha_E\phi_C
@@ -97,68 +97,68 @@ $$
 - \beta l_S^*(t,k)\phi_S L_I
 + \lambda\phi_R
 - \partial_k\!\left(\phi_S b_S\right),
-$$
+```
 
 where
-$$
+```math
 b_S=(r_t-\delta)k + w_t\eta(S)l_S^*(t,k)-c_S^*(t,k).
-$$
+```
 
 For `I`:
 
-$$
+```math
 \partial_t \phi_I
 = -(\sigma_1+\mu+\sigma_3)\phi_I
 + \beta l_S^*(t,k)\phi_S L_I
 - \partial_k\!\left(\phi_I b_I\right),
-$$
-$$
+```
+```math
 b_I=(r_t-\delta)k + w_t\eta(I)l_I^*(t,k)-c_I^*(t,k).
-$$
+```
 
 For `C`:
 
-$$
+```math
 \partial_t \phi_C
 = \sigma_1\phi_I
 - (\alpha_E+\sigma_2+\mu)\phi_C
 - \partial_k\!\left(\phi_C b_C\right),
-$$
-$$
+```
+```math
 b_C=(r_t-\delta)k-c_C^*(t,k).
-$$
+```
 
 For `R`:
 
-$$
+```math
 \partial_t \phi_R
 = \sigma_2\phi_C + \sigma_3\phi_I - (\lambda+\mu)\phi_R + q^*(t,k)\phi_S
 - \partial_k\!\left(\phi_R b_R\right),
-$$
-$$
+```
+```math
 b_R=(r_t-\delta)k + w_t\eta(R)l_R^*(t,k)-c_R^*(t,k).
-$$
+```
 
 Aggregate infected labor term:
 
-$$
+```math
 L_I(t)=\int l_I^*(t,k)\phi_I(t,k)\,dk.
-$$
+```
 
 ### Household objective and HJB system
 
 The model solves (state-contingent) dynamic programs with discount $ρ$.
 Utility in code is implemented as:
 
-$$
+```math
 u(c,l)=\theta\log(c)+(1-\theta)\log(1-l),
-$$
+```
 
 with additional health disutility $d_I$, $d_C$, and vaccination cost $-\frac{\gamma}{2}q^2$.
 
 Representative objective (state-dependent controls and transitions):
 
-$$
+```math
 \max_{(c,l,q)}\;\mathbb{E}\!\left[\int_0^\infty e^{-\rho t}
 \left(
 u(c_t, l_t)
@@ -166,11 +166,11 @@ u(c_t, l_t)
 - d_C\,\mathbf{1}_{\{e_t=C\}}
 - \frac{\gamma}{2}q_t^2
 \right)dt\right].
-$$
+```
 
 HJB for `S`:
 
-$$
+```math
 \rho V_S(k)=\max_{c\ge0,\,l\in[0,1],\,q\ge0}
 \left\{
 u(c,l)+V'_S(k)\big[(r-\delta)k+w l-c\big]
@@ -178,85 +178,85 @@ u(c,l)+V'_S(k)\big[(r-\delta)k+w l-c\big]
 +\beta l L_I \big(V_I-V_S\big)
 -\frac{\gamma}{2}q^2
 \right\}.
-$$
+```
 
 HJB for `I`:
 
-$$
+```math
 \rho V_I(k)=\max_{c\ge0,\,l\in[0,1]}
 \left\{
 u(c,l)-d_I
 +V'_I(k)\big[(r-\delta)k+w\eta(I)l-c\big]
 +\sigma_1(V_C-V_I)+\mu(V_S-V_I)+\sigma_3(V_R-V_I)
 \right\}.
-$$
+```
 
 HJB for `C`:
 
-$$
+```math
 \rho V_C(k)=\max_{c\ge0}
 \left\{
 \theta\log(c)-d_C
 +V'_C(k)\big[(r-\delta)k-c\big]
 +(\alpha_E+\mu)(V_S-V_C)+\sigma_2(V_R-V_C)
 \right\}.
-$$
+```
 
 HJB for `R`:
 
-$$
+```math
 \rho V_R(k)=\max_{c\ge0,\,l\in[0,1]}
 \left\{
 u(c,l)+V'_R(k)\big[(r-\delta)k+w l-c\big]
 +(\lambda+\mu)(V_S-V_R)
 \right\}.
-$$
+```
 
 ### Aggregates and prices
 
-$$
+```math
 K_t=\sum_{e\in\{S,I,C,R\}}\int k\,\phi_e(t,k)\,dk,
 \quad
 L_t=\sum_e \eta(e)\int l_e^*(t,k)\phi_e(t,k)\,dk.
-$$
+```
 
 With production:
 
-$$
+```math
 Y_t=A K_t^\alpha L_t^{1-\alpha},
 \quad
 r_t=\alpha A K_t^{\alpha-1}L_t^{1-\alpha},
 \quad
 w_t=(1-\alpha)A K_t^\alpha L_t^{-\alpha}.
-$$
+```
 
 ### Implemented policy formulas
 
 The code uses these pointwise controls from HJB FOCs:
 
-$$
+```math
 c_e^*(k)=\frac{\theta}{V'_e(k)},\qquad e\in\{S,I,C,R\},
-$$
+```
 
-$$
+```math
 l_e^*(k)=\max\!\left(0,\min\!\left(1,1-\frac{1-\theta}{V'_e(k)W_e(k)}\right)\right),\qquad e\in\{S,I,R\},
-$$
+```
 and `l_C^*=0` (because `ηC=0`, implemented through effective wage clipping).
 
 Effective wages:
 
-$$
+```math
 W_I=\eta_I w,\quad W_C=\eta_C w,\quad W_R=\eta_R w,
-$$
-$$
+```
+```math
 W_S(k)=\eta_S w + \beta L_I\frac{V_I(k)-V_S(k)}{V'_S(k)}.
-$$
+```
 
 Vaccination:
 
-$$
+```math
 q^*(k)=\operatorname{clip}\!\left(\frac{V_R(k)-V_S(k)}{\gamma},\,0,\,q_{\max}\right).
-$$
+```
 
 ## Numerical details
 
@@ -281,9 +281,9 @@ This avoids division by zero in `c = θ/V'` and in labor/effective wage terms.
 
 For fixed `w`, HJB is solved by repeated application of:
 
-$$
+```math
 (\rho I - A - Q)V = u,
-$$
+```
 
 where:
 - `A` is the upwind advection matrix for `-b_e(k)\partial_k V_e(k)`.
@@ -325,9 +325,9 @@ Inside each stationary HJB solve:
 
 Given current controls, FP uses:
 
-$$
+```math
 \dot{\phi}=G\phi,
-$$
+```
 
 with:
 - Conservative upwind drift block per state.
@@ -335,9 +335,9 @@ with:
 
 Time stepping is implicit Euler:
 
-$$
+```math
 (I-\Delta t_{\text{eff}}G^n)\phi^{n+1}=\phi^n.
-$$
+```
 
 After each step, numerical safety fixes are applied:
 - Project density to nonnegative values.
