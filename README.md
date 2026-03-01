@@ -5,6 +5,7 @@ Julia code for an epidemic-economic Mean Field Game (MFG) with heterogeneous age
 The code solves:
 - A stationary-in-form HJB system (re-solved over time because aggregates and infection depend on the current distribution).
 - A forward Kolmogorov / Fokker-Planck (FP/KFE) equation for the joint distribution over capital and health states.
+- A coupled numerical scheme with FP time-marching as the outer loop, a wage fixed point as an outer stationary loop, and HJB value iteration as the inner stationary loop.
 
 ## Code structure and code usage
 
@@ -28,7 +29,7 @@ DEBUG.jl                # Quick one-shot run
 
 ### Main data objects
 
-- Distribution at one time: `Ft = (ϕSt, ϕIt, ϕCt, ϕRt)`, each vector length `Nk`.
+- Distribution at one time: $F_t=(\phi_S(t,\cdot),\phi_I(t,\cdot),\phi_C(t,\cdot),\phi_R(t,\cdot))$, stored as `Ft = (ϕSt, ϕIt, ϕCt, ϕRt)` (each vector length `Nk`).
 - Value functions: `V = (VS, VI, VC, VR)`, each vector length `Nk`.
 - Coupled output from `solveModel`:
   - `result.t`: saved time grid.
@@ -72,19 +73,19 @@ F0 = create_test_distribution(p)
 result = solveModel(p, F0; show_progress=false, save_stride=2)
 ```
 
-`HJB_every > 1` freezes controls between HJB updates for speed.
+If $\mathrm{HJB\_every}>1$, controls are frozen between HJB updates for speed.
 
 ## Math problem that we are solving
 
 ### States and controls
 
 - Epidemiological states: `S` (susceptible), `I` (infected), `C` (contained), `R` (recovered).
-- Individual state variable: capital `k >= 0`.
-- Controls: consumption `c`, labor `l` (with `l_C = 0` in implementation), and vaccination intensity `q` for susceptible agents.
+- Individual state variable: capital $k\ge 0$.
+- Controls: consumption $c$, labor $l$ (with $l_C=0$ in implementation), and vaccination intensity $q$ for susceptible agents.
 
 ### Forward equation (FP/KFE)
 
-Let `ϕ_e(t,k)` be the cross-sectional density in state `e`.
+Let $\phi_e(t,k)$ be the cross-sectional density in state $e$.
 
 For `S`:
 
@@ -241,7 +242,7 @@ c_e^*(k)=\frac{\theta}{V'_e(k)},\qquad e\in\{S,I,C,R\},
 ```math
 l_e^*(k)=\max\!\left(0,\min\!\left(1,1-\frac{1-\theta}{V'_e(k)W_e(k)}\right)\right),\qquad e\in\{S,I,R\},
 ```
-and `l_C^*=0` (because `ηC=0`, implemented through effective wage clipping).
+and $l_C^*=0$ (because $\eta_C=0$, implemented through effective wage clipping).
 
 Effective wages:
 
@@ -255,27 +256,27 @@ W_S(k)=\eta_S w + \beta L_I\frac{V_I(k)-V_S(k)}{V'_S(k)}.
 Vaccination:
 
 ```math
-q^*(k)=\operatorname{clip}\!\left(\frac{V_R(k)-V_S(k)}{\gamma},\,0,\,q_{\max}\right).
+q^*(k)=\min\!\left\{q_{\max},\max\!\left\{0,\frac{V_R(k)-V_S(k)}{\gamma}\right\}\right\}.
 ```
 
 ## Numerical details
 
 ### 1. Grids and time discretization
 
-- Capital grid: `k_i = (i-1)Δk`, `i=1,...,Nk`, with `Nk = Int(MaxK/Δk)+1`.
+- Capital grid: $k_i=(i-1)\Delta k$, $i=1,\dots,N_k$, with $N_k=\mathrm{Int}(\mathrm{MaxK}/\Delta k)+1$.
 - Time step for FP in `solveModel`:
-  - `Nstep = ceil(T_End/Δt)`.
-  - Effective step used in simulation: `Δt_eff = T_End/Nstep`.
-- States are stacked as a vector of length `4Nk` in order `(S,I,C,R)`.
+  - $N_{\mathrm{step}}=\lceil T_{\mathrm{End}}/\Delta t\rceil$.
+  - Effective step used in simulation: $\Delta t_{\mathrm{eff}}=T_{\mathrm{End}}/N_{\mathrm{step}}$.
+- States are stacked as a vector of length $4N_k$ in order $(S,I,C,R)$.
 
 ### 2. Safe derivative and control stability
 
-`∂k_safe!` uses:
+`∂k_safe!` computes a numerical approximation of $\partial_k V_e(k)$ using:
 - One-sided differences at boundaries.
 - Central differences inside the domain.
-- A positivity floor `ϵDkUp` on `V'(k)`.
+- A positivity floor `ϵDkUp` on $V'(k)$.
 
-This avoids division by zero in `c = θ/V'` and in labor/effective wage terms.
+This avoids division by zero in $c=\theta/V'$ and in labor/effective wage terms.
 
 ### 3. HJB discretization and solver
 
@@ -286,27 +287,27 @@ For fixed `w`, HJB is solved by repeated application of:
 ```
 
 where:
-- `A` is the upwind advection matrix for `-b_e(k)\partial_k V_e(k)`.
-- `Q` is the health-state transition generator.
-- `u` is the flow utility vector.
+- $A$ is the upwind advection matrix for $-b_e(k)\partial_k V_e(k)$.
+- $Q$ is the health-state transition generator.
+- $u$ is the flow utility vector.
 
 Implementation specifics:
-- Upwind split at each grid point: `b^+ = max(b,0)`, `b^- = min(b,0)`.
+- Upwind split at each grid point: $b^+=\max(b,0)$, $b^-=\min(b,0)$.
 - Sparse matrix assembled by triplets `(I,J,X)` then solved with sparse backslash.
 - Value iteration damping:
-  - `V <- (1-ω)V + ω T(V)`.
+  - $V\leftarrow (1-\omega)V+\omega T(V)$.
 - Convergence criterion:
-  - `max_e ||T(V_e)-V_e||_∞ < tolHJBvalue`.
+  - $\max_e\|T(V_e)-V_e\|_\infty<\mathrm{tolHJBvalue}$.
 
 ### 4. Boundary state constraints in capital
 
-The code enforces state constraints at `k=0` and `k=MaxK` in two places:
+The code enforces state constraints at $k=0$ and $k=k_{\max}$ (implemented as the first and last grid nodes) in two places:
 
 - On controls (consumption clipping):
-  - At `k=0`: force `b_e(0) >= 0` by imposing `c_e(0) <= income_e(0)`.
-  - At `k=MaxK`: force `b_e(MaxK) <= 0` by imposing `c_e(MaxK) >= income_e(MaxK)`.
+  - At $k=0$: force $b_e(0)\ge 0$ by imposing $c_e(0)\le \mathrm{income}_e(0)$.
+  - At $k=k_{\max}$: force $b_e(k_{\max})\le 0$ by imposing $c_e(k_{\max})\ge \mathrm{income}_e(k_{\max})$.
 - On drift directly:
-  - `b_e[1] = max(b_e[1],0)`, `b_e[end] = min(b_e[end],0)`.
+  - $b_e[1]=\max\{b_e[1],0\}$, $b_e[N_k]=\min\{b_e[N_k],0\}$.
 
 This is consistent with no-outflow state constraints for both HJB and FP operators.
 
@@ -318,15 +319,15 @@ Inside each stationary HJB solve:
 2. Solve HJB at current wage.
 3. Compute implied wage from aggregates and production function.
 4. Update with damping:
-   - `w <- (1-ωw)w + ωw w_implied`.
-5. Stop when `|w_implied - w| < tolWage`.
+   - $w\leftarrow (1-\omega_w)w+\omega_w\,w_{\mathrm{implied}}$.
+5. Stop when $|w_{\mathrm{implied}}-w|<\mathrm{tolWage}$.
 
 ### 6. FP/KFE generator and time stepping
 
 Given current controls, FP uses:
 
 ```math
-\dot{\phi}=G\phi,
+\dot{\phi}=G\phi.
 ```
 
 with:
@@ -336,7 +337,7 @@ with:
 Time stepping is implicit Euler:
 
 ```math
-(I-\Delta t_{\text{eff}}G^n)\phi^{n+1}=\phi^n.
+(I-\Delta t_{\mathrm{eff}}G^n)\phi^{n+1}=\phi^n.
 ```
 
 After each step, numerical safety fixes are applied:
@@ -345,22 +346,34 @@ After each step, numerical safety fixes are applied:
 
 ### 7. Coupled algorithm implemented in `solveModel`
 
-At each FP step `n`:
+The implemented loop is explicitly nested:
 
-1. Read current distribution `F^n`.
-2. If `n` is a recomputation step (`HJB_every`), solve stationary HJB + wage.
-3. Build FP policies and generator `G^n`.
-4. Do one implicit Euler update for distribution.
-5. Apply nonnegativity projection and mass renormalization.
-6. Save `t, F, V, controls` according to `save_stride`.
+1. FP time-marching loop (outermost): for $n=0,\dots,N_t-1$, given $\phi^n$.
+2. Stationary equilibrium update at time step $n$ (performed every `HJB_every` steps):
+   - Outer fixed point on wage $w$:
+     ```math
+     w^{m+1}=(1-\omega_w)w^m+\omega_w\,T_w(w^m;V,\phi^n),
+     ```
+     stopped when $|w^{m+1}-w^m|<\mathrm{tolWage}$.
+   - Inner fixed point on HJB for each wage iterate:
+     ```math
+     V^{j+1}=(1-\omega)V^j+\omega\,T_{\mathrm{HJB}}(V^j;w^m,\phi^n),
+     ```
+     stopped when $\|V^{j+1}-V^j\|_\infty<\mathrm{tolHJBvalue}$.
+3. With converged $(V^n,w^n)$, build controls and generator $G^n$.
+4. FP one-step time march (Backward Euler):
+   ```math
+   (I-\Delta t_{\mathrm{eff}}G^n)\phi^{n+1}=\phi^n.
+   ```
+5. Project to nonnegative mass, renormalize to total mass $1$, and save outputs.
 
-`HJB_every=1` is fully coupled; larger values trade accuracy for speed.
+$\mathrm{HJB\_every}=1$ is fully coupled; larger values trade accuracy for speed.
 
 ### 8. Diagnostics and plotting
 
 - `DEBUG_HJB.jl` checks:
   - HJB fixed-point residual.
-  - Linear-system residual `||M*V-rhs||_∞`.
+  - Linear-system residual $\|MV-\mathrm{rhs}\|_\infty$.
   - Wage residual.
 - `DEBUG_FP.jl` checks:
   - Distribution mass preservation.
