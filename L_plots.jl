@@ -872,6 +872,223 @@ function save_figure_7bis_vaccination_flow_S_to_R_surface(result, p;
 	return nothing
 end
 
+function save_figure_8_effective_wage_S(result, p;
+	outdir::AbstractString = "figures",
+	filename::AbstractString = "figure_8_heatmap_effective_wage_WS_tk.pdf",
+	contour_lines::Int = 6,
+)
+	mkpath(outdir)
+
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	k = collect(p.k)
+	if Nt == 0
+		error("result.t is empty")
+	end
+	if length(result.F) != Nt || length(result.V) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(F)=$(length(result.F)), length(V)=$(length(result.V))")
+	end
+
+	WS = Matrix{Float64}(undef, Nt, Nk)
+	dcache = DerivDkCache(Float64, Nk)
+	@inbounds for n in 1:Nt
+		Ft = result.F[n]
+		Vn = result.V[n]
+		Vt = (VS = Vn.VS, VI = Vn.VI, VC = Vn.VC, VR = Vn.VR)
+		∂V = compute_∂V_dk!(dcache, Vt, p)
+		agg = compute_labor_and_aggregates(Vt, ∂V, Ft, p; w = Vn.w)
+		WS[n, :] .= agg.W.WS
+	end
+
+	ws_lo, ws_hi = _finite_minmax(WS)
+	clims_ws = _safe_colorrange(ws_lo, ws_hi)
+
+	fig = CairoMakie.Figure(size = (1100, 650))
+	ax = CairoMakie.Axis(fig[1, 1], title = "Effective wage for S: W_S(t,k)", xlabel = "t", ylabel = "k")
+	hm = _heatmap_with_contours!(ax, t, k, WS; colormap = :viridis, colorrange = clims_ws, contour_lines = contour_lines)
+	CairoMakie.Colorbar(fig[1, 2], hm)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
+function save_figure_8bis_effective_wage_S_surface(result, p;
+	outdir::AbstractString = "figures",
+	filename::AbstractString = "figure_8bis_surface_effective_wage_WS_tk.jpg",
+	maxNt::Int = 140,
+	maxNk::Int = 140,
+	rasterize = 1,
+	px_per_unit::Real = 1.35,
+	jpg_quality::Int = 92,
+)
+	mkpath(outdir)
+
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	k = collect(p.k)
+	if Nt == 0
+		error("result.t is empty")
+	end
+	if length(result.F) != Nt || length(result.V) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(F)=$(length(result.F)), length(V)=$(length(result.V))")
+	end
+
+	WS = Matrix{Float64}(undef, Nt, Nk)
+	dcache = DerivDkCache(Float64, Nk)
+	@inbounds for n in 1:Nt
+		Ft = result.F[n]
+		Vn = result.V[n]
+		Vt = (VS = Vn.VS, VI = Vn.VI, VC = Vn.VC, VR = Vn.VR)
+		∂V = compute_∂V_dk!(dcache, Vt, p)
+		agg = compute_labor_and_aggregates(Vt, ∂V, Ft, p; w = Vn.w)
+		WS[n, :] .= agg.W.WS
+	end
+
+	ws_lo, ws_hi = _finite_minmax(WS)
+	clims_ws = _safe_colorrange(ws_lo, ws_hi)
+
+	fig = CairoMakie.Figure(size = (1050, 650))
+	ax = CairoMakie.Axis3(fig[1, 1], title = "Effective wage for S", xlabel = "t", ylabel = "k", zlabel = "W_S")
+	plt = _surface_plot!(ax, t, k, WS; colormap = :viridis, colorrange = clims_ws, maxNt = maxNt, maxNk = maxNk, rasterize = rasterize)
+	CairoMakie.Colorbar(fig[1, 2], plt)
+	outpath = joinpath(outdir, filename)
+	if endswith(lowercase(filename), ".jpg") || endswith(lowercase(filename), ".jpeg")
+		_save_as_jpg(outpath, fig; px_per_unit = px_per_unit, quality = jpg_quality)
+	else
+		CairoMakie.save(outpath, fig)
+	end
+	return nothing
+end
+
+function save_figure_9_R0_over_time(result, p;
+	outdir::AbstractString = "figures",
+	filename::AbstractString = "figure_9_R0_over_time.pdf",
+)
+	mkpath(outdir)
+
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	if Nt == 0
+		error("result.t is empty")
+	end
+	if length(result.F) != Nt || length(result.V) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(F)=$(length(result.F)), length(V)=$(length(result.V))")
+	end
+
+	R0t = fill(NaN, Nt)
+	dcache = DerivDkCache(Float64, Nk)
+	exitI = p.σ1 + p.σ3 + p.μ
+	if !(isfinite(exitI) && exitI > 0)
+		error("Non-finite or non-positive exit rate from I: σ1+σ3+μ = $exitI")
+	end
+
+	@inbounds for n in 1:Nt
+		Ft = result.F[n]
+		Vn = result.V[n]
+		Vt = (VS = Vn.VS, VI = Vn.VI, VC = Vn.VC, VR = Vn.VR)
+		∂V = compute_∂V_dk!(dcache, Vt, p)
+		lOpt, _ = optimal_labor_ALL(Vt, ∂V, Ft, Vn.w, p)
+
+		# Integrate along k
+		LS = sum(lOpt.lS .* Ft.ϕSt) * p.Δk
+		I_mass = sum(Ft.ϕIt) * p.Δk
+		LI = sum(lOpt.lI .* Ft.ϕIt) * p.Δk
+		lI_bar = I_mass > 0 ? (LI / I_mass) : 0.0
+
+		# Effective reproduction number based on linearized I dynamics:
+		# new infections per infected ≈ β * (average infected labor) * (susceptible labor mass)
+		R0t[n] = (p.β * lI_bar * LS) / exitI
+	end
+
+	fig = CairoMakie.Figure(size = (1000, 500))
+	ax = CairoMakie.Axis(fig[1, 1], title = "R₀(t) integrated over k", xlabel = "t", ylabel = "R₀")
+	CairoMakie.lines!(ax, t, R0t; linewidth = 2)
+	CairoMakie.hlines!(ax, [1.0]; color = (:black, 0.35), linestyle = :dash)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
+function save_figure_10_wealth_distribution_total(result, p;
+	outdir::AbstractString = "figures",
+	filename::AbstractString = "figure_10_heatmap_wealth_distribution_total_tk.pdf",
+	contour_lines::Int = 6,
+)
+	mkpath(outdir)
+
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	k = collect(p.k)
+	if Nt == 0
+		error("result.t is empty")
+	end
+	if length(result.F) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(F)=$(length(result.F))")
+	end
+
+	Φ = Matrix{Float64}(undef, Nt, Nk)
+	@inbounds for n in 1:Nt
+		Ft = result.F[n]
+		Φ[n, :] .= Ft.ϕSt .+ Ft.ϕIt .+ Ft.ϕCt .+ Ft.ϕRt
+	end
+
+	ϕ_lo, ϕ_hi = _finite_minmax(Φ)
+	clims_ϕ = _safe_colorrange(ϕ_lo, ϕ_hi)
+
+	fig = CairoMakie.Figure(size = (1100, 650))
+	ax = CairoMakie.Axis(fig[1, 1], title = "Total wealth distribution: ϕS+ϕI+ϕC+ϕR", xlabel = "t", ylabel = "k")
+	hm = _heatmap_with_contours!(ax, t, k, Φ; colormap = :viridis, colorrange = clims_ϕ, contour_lines = contour_lines)
+	CairoMakie.Colorbar(fig[1, 2], hm)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
+function save_figure_10bis_wealth_distribution_total_surface(result, p;
+	outdir::AbstractString = "figures",
+	filename::AbstractString = "figure_10bis_surface_wealth_distribution_total_tk.jpg",
+	maxNt::Int = 140,
+	maxNk::Int = 140,
+	rasterize = 1,
+	px_per_unit::Real = 1.35,
+	jpg_quality::Int = 92,
+)
+	mkpath(outdir)
+
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	k = collect(p.k)
+	if Nt == 0
+		error("result.t is empty")
+	end
+	if length(result.F) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(F)=$(length(result.F))")
+	end
+
+	Φ = Matrix{Float64}(undef, Nt, Nk)
+	@inbounds for n in 1:Nt
+		Ft = result.F[n]
+		Φ[n, :] .= Ft.ϕSt .+ Ft.ϕIt .+ Ft.ϕCt .+ Ft.ϕRt
+	end
+
+	ϕ_lo, ϕ_hi = _finite_minmax(Φ)
+	clims_ϕ = _safe_colorrange(ϕ_lo, ϕ_hi)
+
+	fig = CairoMakie.Figure(size = (1050, 650))
+	ax = CairoMakie.Axis3(fig[1, 1], title = "Total wealth distribution", xlabel = "t", ylabel = "k", zlabel = "ϕ")
+	plt = _surface_plot!(ax, t, k, Φ; colormap = :viridis, colorrange = clims_ϕ, maxNt = maxNt, maxNk = maxNk, rasterize = rasterize)
+	CairoMakie.Colorbar(fig[1, 2], plt)
+	outpath = joinpath(outdir, filename)
+	if endswith(lowercase(filename), ".jpg") || endswith(lowercase(filename), ".jpeg")
+		_save_as_jpg(outpath, fig; px_per_unit = px_per_unit, quality = jpg_quality)
+	else
+		CairoMakie.save(outpath, fig)
+	end
+	return nothing
+end
+
 """
 	save_all_figures(result, p; outdir="figures", contour_lines=6)
 
@@ -894,7 +1111,7 @@ function save_all_figures(result, p;
 )
 	mkpath(outdir)
 
-	_total = with_surfaces ? 15 : 8
+	_total = with_surfaces ? 20 : 11
 	_pbar = progress ? ProgressMeter.Progress(_total; desc = "Saving figures") : nothing
 	_tick(label::AbstractString) = (_pbar === nothing ? nothing : ProgressMeter.next!(_pbar; showvalues = [("step", label)]))
 
@@ -914,6 +1131,12 @@ function save_all_figures(result, p;
 	_tick("figure 6")
 	save_figure_7_vaccination_flow_S_to_R(result, p; outdir = outdir, contour_lines = contour_lines)
 	_tick("figure 7")
+	save_figure_8_effective_wage_S(result, p; outdir = outdir, contour_lines = contour_lines)
+	_tick("figure 8")
+	save_figure_9_R0_over_time(result, p; outdir = outdir)
+	_tick("figure 9")
+	save_figure_10_wealth_distribution_total(result, p; outdir = outdir, contour_lines = contour_lines)
+	_tick("figure 10")
 
 	if with_surfaces
 		save_figure_2bis_distributions_surface(result, p; outdir = outdir)
@@ -930,6 +1153,10 @@ function save_all_figures(result, p;
 		_tick("figure 6bis")
 		save_figure_7bis_vaccination_flow_S_to_R_surface(result, p; outdir = outdir)
 		_tick("figure 7bis")
+		save_figure_8bis_effective_wage_S_surface(result, p; outdir = outdir)
+		_tick("figure 8bis")
+		save_figure_10bis_wealth_distribution_total_surface(result, p; outdir = outdir)
+		_tick("figure 10bis")
 	end
 
 	return nothing

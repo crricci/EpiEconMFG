@@ -17,7 +17,8 @@ externality terms used when computing optimal controls.
 - `progress_every`: call `progress_cb` every this many HJB iterations (minimum 1).
 
 # Returns
-A `NamedTuple` `(VS, VI, VC, VR, itV)`.
+A `NamedTuple` `(VS, VI, VC, VR, itV, errV)` where `errV` is the final undamped
+value-iteration error at convergence.
 """
 function value_iterationHJB_given_wage(V0, Ft, p; w, progress_cb=nothing, progress_every::Int=getproperty(p, :progressHJB_every))
     # current iterate
@@ -84,7 +85,7 @@ function value_iterationHJB_given_wage(V0, Ft, p; w, progress_cb=nothing, progre
 
         if err < p.tolHJBvalue
             p.verbose && println("Converged in $it iterations (error = $err)")
-            return (VS = VS, VI = VI, VC = VC, VR = VR, itV = it)
+            return (VS = VS, VI = VI, VC = VC, VR = VR, itV = it, errV = err)
         end
     end
 
@@ -176,7 +177,9 @@ If `progress_cb` is provided, it is called as `progress_cb(itw, itV)` at user-co
 frequencies (`p.progressWage_every` and `p.progressHJB_every`).
 
 # Returns
-A `NamedTuple` containing `(VS, VI, VC, VR, w, itw, itV)`.
+A `NamedTuple` containing `(VS, VI, VC, VR, w, itw, itV, errW, errV)` where:
+- `errW` is the final wage fixed-point residual `|w_implied - w|` at convergence.
+- `errV` is the final HJB value-iteration error at the last inner solve.
 """
 function value_iterationHJB(V0, Ft, p)
 	return value_iterationHJB(V0, Ft, p; progress_cb = nothing)
@@ -190,6 +193,7 @@ function value_iterationHJB(V0, Ft, p; progress_cb=nothing)
     dcache = DerivDkCache(eltype(V.VS), p.Nk)
 
     last_itV = 0
+    last_errV = NaN
     wage_every = getproperty(p, :progressWage_every)
     hjb_every = getproperty(p, :progressHJB_every)
     if wage_every < 1
@@ -212,6 +216,7 @@ function value_iterationHJB(V0, Ft, p; progress_cb=nothing)
         inner_cb = progress_cb === nothing ? nothing : (itV -> progress_cb(0, itV))
         V = value_iterationHJB_given_wage(V, Ft, p; w = w, progress_cb = inner_cb, progress_every = hjb_every)
         last_itV = hasproperty(V, :itV) ? V.itV : 0
+        last_errV = hasproperty(V, :errV) ? V.errV : NaN
 
         # 2) Update wage using implied aggregate wage mapping
         ∂V = compute_∂V_dk!(dcache, V, p)
@@ -244,6 +249,8 @@ function value_iterationHJB(V0, Ft, p; progress_cb=nothing)
                 w = w_implied,
                 itw = itw,
                 itV = last_itV,
+                errW = gap,
+                errV = last_errV,
             )
         end
 

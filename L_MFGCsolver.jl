@@ -54,6 +54,9 @@ function solveModel(
     progress_every::Int = 1,
 )
 
+    # Local helper: format residuals compactly for progress messages.
+    fmt_residual(x) = (x isa Number && isfinite(x)) ? string(round(x, sigdigits = 3)) : "n/a"
+
     Nk = p.Nk
     if HJB_every < 1
         error("HJB_every must be >= 1")
@@ -135,6 +138,8 @@ function solveModel(
                     # time step finishes to "fix" that step's final line.
                     last_itw = 0
                     last_itV = 0
+                    last_errW = NaN
+                    last_errV = NaN
                     emit = function (itw, itV)
                         if itw > 0
                             last_itw = itw
@@ -142,7 +147,11 @@ function solveModel(
                         if itV > 0
                             last_itV = itV
                         end
-                        msg = "time step $(i)/$(Nstep_eff) | wage $(last_itw)/$(p.maxitWage) | HJB $(last_itV)/$(p.maxitHJBvalue)"
+
+                        err_suffix = (isfinite(last_errW) || isfinite(last_errV)) ?
+                            " | errW=$(fmt_residual(last_errW)) | errV=$(fmt_residual(last_errV))" : ""
+
+                        msg = "time step $(i)/$(Nstep_eff) | wage $(last_itw)/$(p.maxitWage) | HJB $(last_itV)/$(p.maxitHJBvalue)" * err_suffix
                         # Clear the line then rewrite it.
                         print("\r\33[2K", msg)
                         flush(stdout)
@@ -150,6 +159,10 @@ function solveModel(
                     end
                     emit(0, 0)
                     Vsol = value_iterationHJB(Vguess, Ft, p; progress_cb = emit)
+
+                    # Only show residuals once we have the converged solution for this step.
+                    last_errW = hasproperty(Vsol, :errW) ? Vsol.errW : NaN
+                    last_errV = hasproperty(Vsol, :errV) ? Vsol.errV : NaN
                     emit(hasproperty(Vsol, :itw) ? Vsol.itw : last_itw, hasproperty(Vsol, :itV) ? Vsol.itV : last_itV)
                     print("\n")
                 else
@@ -168,7 +181,10 @@ function solveModel(
             if show_progress && !verbose && !do_solve
                 itw = hasproperty(Vsol, :itw) ? Vsol.itw : 0
                 itV = hasproperty(Vsol, :itV) ? Vsol.itV : 0
-                msg = "time step $(i)/$(Nstep_eff) | wage $(itw)/$(p.maxitWage) | HJB $(itV)/$(p.maxitHJBvalue)"
+                errW = hasproperty(Vsol, :errW) ? Vsol.errW : NaN
+                errV = hasproperty(Vsol, :errV) ? Vsol.errV : NaN
+                msg = "time step $(i)/$(Nstep_eff) | wage $(itw)/$(p.maxitWage) | HJB $(itV)/$(p.maxitHJBvalue)" *
+                    " | errW=$(fmt_residual(errW)) | errV=$(fmt_residual(errV))"
                 print("\r\33[2K", msg, "\n")
             end
 
@@ -176,7 +192,10 @@ function solveModel(
             if show_progress && verbose && (i == 1 || i == Nstep_eff || (progress_every > 0 && i % progress_every == 0))
                 itw = hasproperty(Vsol, :itw) ? Vsol.itw : 0
                 itV = hasproperty(Vsol, :itV) ? Vsol.itV : 0
-                msg = "time step $(i)/$(Nstep_eff) | wage $(itw)/$(p.maxitWage) | HJB $(itV)/$(p.maxitHJBvalue)"
+                errW = hasproperty(Vsol, :errW) ? Vsol.errW : NaN
+                errV = hasproperty(Vsol, :errV) ? Vsol.errV : NaN
+                msg = "time step $(i)/$(Nstep_eff) | wage $(itw)/$(p.maxitWage) | HJB $(itV)/$(p.maxitHJBvalue)" *
+                    " | errW=$(fmt_residual(errW)) | errV=$(fmt_residual(errV))"
                 print("\r", rpad(msg, 110))
                 flush(stdout)
             end
