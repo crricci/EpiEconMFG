@@ -12,19 +12,22 @@ The code solves:
 ### Repository structure
 
 ```text
-L_parameters.jl         # Parameters and initial distribution
-L_diff.jl               # Safe first derivative on capital grid
-L_aggregateVariables.jl # Optimal labor and aggregate K, L
-L_wageSolver.jl         # Wage fixed-point map (plus robust root fallback)
-L_HJBsolver.jl          # HJB linear-system assembly + value iteration + wage outer loop
-L_KFEsolver.jl          # FP policy extraction + generator assembly + implicit Euler
-L_MFGCsolver.jl         # Main coupled solver `solveModel`
-L_plots.jl              # Figure generation (heatmaps + surfaces)
-L_loadAll.jl            # Dependency loading + includes all code modules
-main.jl                 # `run()` entrypoint (solve + save figures)
-DEBUG_HJB.jl            # HJB diagnostics / residual checks
-DEBUG_FP.jl             # FP diagnostics
-DEBUG.jl                # Quick one-shot run
+main.jl                         # `run()` entrypoint for interactive experiments
+src/EpiEconMFG.jl               # Main module and includes
+src/core/parameters.jl          # Parameters, prices, and initial distribution
+src/core/diff.jl                # Safe first derivative on capital grid
+src/core/aggregates.jl          # Optimal labor and aggregate K, L
+src/solvers/hjb_stationary.jl   # Current stationary-form HJB solver
+src/solvers/hjb_time_dependent.jl # Placeholder for the future backward HJB
+src/solvers/fp_kfe.jl           # FP/KFE policies, generator, and implicit Euler
+src/solvers/coupled_quasistatic.jl # Current hybrid FP-time / stationary-HJB loop
+src/solvers/coupled_forward_backward.jl # Placeholder for the future true MFG loop
+src/solvers/wage_legacy.jl      # Alternative wage fixed-point helper, kept for reference
+src/visualization/plots.jl      # Figure generation
+scripts/debug_hjb.jl            # HJB diagnostics / residual checks
+scripts/debug_fp.jl             # FP diagnostics
+docs/                          # Notes for model/architecture changes
+outputs/                       # Generated outputs, ignored by git
 ```
 
 ### Main data objects
@@ -46,19 +49,21 @@ julia --project=. -e 'using Pkg; Pkg.instantiate(); include("main.jl"); run()'
 Equivalent from REPL:
 
 ```julia
-include("L_loadAll.jl")
+include("src/EpiEconMFG.jl")
+using .EpiEconMFG
 
 p = MFGEpiEcon()
 F0 = create_test_distribution(p)
 
 result = solveModel(p, F0; show_progress=true)
-save_all_figures(result, p)
+save_all_figures(result, p; outdir="outputs/figures")
 ```
 
 ### Typical customization
 
 ```julia
-include("L_loadAll.jl")
+include("src/EpiEconMFG.jl")
+using .EpiEconMFG
 
 p = MFGEpiEcon(
     MaxK = 80.0,
@@ -371,11 +376,11 @@ $\mathrm{HJB\_every}=1$ is fully coupled; larger values trade accuracy for speed
 
 ### 8. Diagnostics and plotting
 
-- `DEBUG_HJB.jl` checks:
+- `scripts/debug_hjb.jl` checks:
   - HJB fixed-point residual.
   - Linear-system residual $\|MV-\mathrm{rhs}\|_\infty$.
   - Wage residual.
-- `DEBUG_FP.jl` checks:
+- `scripts/debug_fp.jl` checks:
   - Distribution mass preservation.
   - Infected mass change.
   - Final prices and aggregates.

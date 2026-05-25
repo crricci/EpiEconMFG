@@ -31,7 +31,6 @@ function _save_as_jpg(path::AbstractString, fig;
 
 	png_path = replace(path, r"\.(jpe?g)$"i => ".png")
 	mv(tmp_png, png_path; force = true)
-	@warn "JPEG not supported; wrote PNG instead" jpg_path = path png_path = png_path
 	return png_path
 end
 
@@ -197,7 +196,7 @@ function _heatmap_with_contours!(ax, t, k, Z_tk;
 end
 
 function save_figure_1_totals(result, p;
-	outdir::AbstractString = "figures",
+	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_1_totals_SICR_over_time.pdf",
 )
 	mkpath(outdir)
@@ -241,7 +240,7 @@ function save_figure_1_totals(result, p;
 end
 
 function save_figure_2_distributions(result, p;
-	outdir::AbstractString = "figures",
+	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_2_heatmaps_distributions_SICR_tk.pdf",
 	contour_lines::Int = 6,
 )
@@ -286,7 +285,7 @@ function save_figure_2_distributions(result, p;
 end
 
 function save_figure_2Rel_relative_shares(result, p;
-	outdir::AbstractString = "figures",
+	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_2Rel_heatmaps_relative_shares_SICR_tk.pdf",
 	contour_lines::Int = 6,
 )
@@ -351,8 +350,8 @@ function save_figure_2Rel_relative_shares(result, p;
 end
 
 function save_figure_2bis_distributions_surface(result, p;
-	outdir::AbstractString = "figures",
-	filename::AbstractString = "figure_2bis_surfaces_distributions_SICR_tk.jpg",
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_2bis_surfaces_distributions_SICR_tk.png",
 	maxNt::Int = 140,
 	maxNk::Int = 140,
 	rasterize = 1,
@@ -405,8 +404,8 @@ function save_figure_2bis_distributions_surface(result, p;
 end
 
 function save_figure_2Relbis_relative_shares_surface(result, p;
-	outdir::AbstractString = "figures",
-	filename::AbstractString = "figure_2Relbis_surfaces_relative_shares_SICR_tk.jpg",
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_2Relbis_surfaces_relative_shares_SICR_tk.png",
 	maxNt::Int = 140,
 	maxNk::Int = 140,
 	rasterize = 1,
@@ -479,7 +478,7 @@ function save_figure_2Relbis_relative_shares_surface(result, p;
 end
 
 function save_figure_3_flux_S_to_I(result, p;
-	outdir::AbstractString = "figures",
+	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_3_heatmap_flux_S_to_I_tk.pdf",
 	contour_lines::Int = 6,
 )
@@ -509,8 +508,8 @@ function save_figure_3_flux_S_to_I(result, p;
 end
 
 function save_figure_3bis_flux_S_to_I_surface(result, p;
-	outdir::AbstractString = "figures",
-	filename::AbstractString = "figure_3bis_surface_flux_S_to_I_tk.jpg",
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_3bis_surface_flux_S_to_I_tk.png",
 	maxNt::Int = 140,
 	maxNk::Int = 140,
 	rasterize = 1,
@@ -548,7 +547,7 @@ function save_figure_3bis_flux_S_to_I_surface(result, p;
 end
 
 function save_figure_4_consumption(result, p;
-	outdir::AbstractString = "figures",
+	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_4_heatmaps_consumption_SICR_tk.pdf",
 	contour_lines::Int = 6,
 )
@@ -593,8 +592,8 @@ function save_figure_4_consumption(result, p;
 end
 
 function save_figure_4bis_consumption_surface(result, p;
-	outdir::AbstractString = "figures",
-	filename::AbstractString = "figure_4bis_surfaces_consumption_SICR_tk.jpg",
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_4bis_surfaces_consumption_SICR_tk.png",
 	maxNt::Int = 140,
 	maxNk::Int = 140,
 	rasterize = 1,
@@ -646,7 +645,7 @@ function save_figure_4bis_consumption_surface(result, p;
 end
 
 function save_figure_5_labor(result, p;
-	outdir::AbstractString = "figures",
+	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_5_heatmaps_labor_SIR_tk.pdf",
 	contour_lines::Int = 6,
 )
@@ -686,8 +685,8 @@ function save_figure_5_labor(result, p;
 end
 
 function save_figure_5bis_labor_surface(result, p;
-	outdir::AbstractString = "figures",
-	filename::AbstractString = "figure_5bis_surfaces_labor_SIR_tk.jpg",
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_5bis_surfaces_labor_SIR_tk.png",
 	maxNt::Int = 140,
 	maxNk::Int = 140,
 	rasterize = 1,
@@ -735,7 +734,7 @@ function save_figure_5bis_labor_surface(result, p;
 end
 
 function save_figure_6_vaccination_q(result, p;
-	outdir::AbstractString = "figures",
+	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_6_heatmap_q_tk.pdf",
 	contour_lines::Int = 6,
 )
@@ -765,8 +764,8 @@ function save_figure_6_vaccination_q(result, p;
 end
 
 function save_figure_6bis_vaccination_q_surface(result, p;
-	outdir::AbstractString = "figures",
-	filename::AbstractString = "figure_6bis_surface_q_tk.jpg",
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_6bis_surface_q_tk.png",
 	maxNt::Int = 140,
 	maxNk::Int = 140,
 	rasterize = 1,
@@ -804,7 +803,7 @@ function save_figure_6bis_vaccination_q_surface(result, p;
 end
 
 function save_figure_7_vaccination_flow_S_to_R(result, p;
-	outdir::AbstractString = "figures",
+	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_7_heatmap_flow_S_to_R_vaccination_tk.pdf",
 	contour_lines::Int = 6,
 )
@@ -834,8 +833,8 @@ function save_figure_7_vaccination_flow_S_to_R(result, p;
 end
 
 function save_figure_7bis_vaccination_flow_S_to_R_surface(result, p;
-	outdir::AbstractString = "figures",
-	filename::AbstractString = "figure_7bis_surface_flow_S_to_R_vaccination_tk.jpg",
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_7bis_surface_flow_S_to_R_vaccination_tk.png",
 	maxNt::Int = 140,
 	maxNk::Int = 140,
 	rasterize = 1,
@@ -873,7 +872,7 @@ function save_figure_7bis_vaccination_flow_S_to_R_surface(result, p;
 end
 
 function save_figure_8_effective_wage_S(result, p;
-	outdir::AbstractString = "figures",
+	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_8_heatmap_effective_wage_WS_tk.pdf",
 	contour_lines::Int = 6,
 )
@@ -913,8 +912,8 @@ function save_figure_8_effective_wage_S(result, p;
 end
 
 function save_figure_8bis_effective_wage_S_surface(result, p;
-	outdir::AbstractString = "figures",
-	filename::AbstractString = "figure_8bis_surface_effective_wage_WS_tk.jpg",
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_8bis_surface_effective_wage_WS_tk.png",
 	maxNt::Int = 140,
 	maxNk::Int = 140,
 	rasterize = 1,
@@ -962,7 +961,7 @@ function save_figure_8bis_effective_wage_S_surface(result, p;
 end
 
 function save_figure_9_R0_over_time(result, p;
-	outdir::AbstractString = "figures",
+	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_9_R0_over_time.pdf",
 )
 	mkpath(outdir)
@@ -1011,7 +1010,7 @@ function save_figure_9_R0_over_time(result, p;
 end
 
 function save_figure_10_wealth_distribution_total(result, p;
-	outdir::AbstractString = "figures",
+	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_10_heatmap_wealth_distribution_total_tk.pdf",
 	contour_lines::Int = 6,
 )
@@ -1046,8 +1045,8 @@ function save_figure_10_wealth_distribution_total(result, p;
 end
 
 function save_figure_10bis_wealth_distribution_total_surface(result, p;
-	outdir::AbstractString = "figures",
-	filename::AbstractString = "figure_10bis_surface_wealth_distribution_total_tk.jpg",
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_10bis_surface_wealth_distribution_total_tk.png",
 	maxNt::Int = 140,
 	maxNk::Int = 140,
 	rasterize = 1,
@@ -1090,12 +1089,12 @@ function save_figure_10bis_wealth_distribution_total_surface(result, p;
 end
 
 """
-	save_all_figures(result, p; outdir="figures", contour_lines=6)
+	save_all_figures(result, p; outdir="outputs/figures", contour_lines=6)
 
 Generate and save a set of figures from the output of `solveModel`.
 
-The main figures are saved as PDF. The "bis" surface figures are saved as JPG by
-default (via PNG rendering + conversion on macOS).
+The main figures are saved as PDF. The "bis" surface figures are saved as PNG by
+default.
 
 Each figure is produced by a separate `save_figure_*` function.
 
@@ -1104,7 +1103,7 @@ Heatmaps are grouped into multi-panel figures (2×2 or 1×3) and include a few
 contour lines overlaid to improve readability.
 """
 function save_all_figures(result, p;
-	outdir::AbstractString = "figures",
+	outdir::AbstractString = "outputs/figures",
 	contour_lines::Int = 6,
 	with_surfaces::Bool = true,
 	progress::Bool = true,
@@ -1161,4 +1160,3 @@ function save_all_figures(result, p;
 
 	return nothing
 end
-

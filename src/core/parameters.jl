@@ -4,21 +4,18 @@
     # All epidemiological parameters are continuous-time transition rates in units of 1/year.
     # With time measured in years, a mean duration of D days corresponds to a rate 365/D.
     #
-    # Model mapping (see L_KFEsolver.jl):
+    # Model mapping (see src/solvers/fp_kfe.jl):
     # - S -> I at rate infection_rate(k) = β * lS(k) * LI, so when lS≈lI≈1 this behaves like β * S * I.
     # - I exits at rate (σ1 + σ3 + μ): I->C with prob σ1/(σ1+σ3+μ), I->R with prob σ3/(...).
     # - C exits at rate (αEpi + σ2 + μ): C->S at rate (αEpi+μ) (interpretable as death+replacement), C->R at σ2.
     # - R -> S at rate (λ + μ).
-    β::T = 20.0          # transmission parameter (≈ R0*(σ1+σ3) with R0≈3 and mean infectious duration ≈5 days)
-    μ::T = 0.0            # background turnover (set ~0 on COVID timescales)
-    σ1::T = 0.1          # I → C (mean time ~5 days, with ~60% going to C)
-    # σ1::T = 44.0          # I → C (mean time ~5 days, with ~60% going to C)
-    σ2::T = 0.4          # C → R (mean time in C ~10 days)
-    # σ2::T = 36.5          # C → R (mean time in C ~10 days)
-    σ3::T = 0.3          # I → R (mean time ~5 days, with ~40% going directly to R)
-    # σ3::T = 29.0          # I → R (mean time ~5 days, with ~40% going directly to R)
-    λ::T = 0.33           # waning immunity R → S (mean ~3 years)
-    αEpi::T = 0.18        # additional C → S hazard (tuned so death-probability while in C is small)
+    β::T = 200.0        # transmission parameter (≈ R0*(σ1+σ3) with R0≈3 and mean infectious duration ≈5 days)
+    μ::T = 1/70         # background turnover (set ~0 on COVID timescales)
+    σ1::T = 365/7       # I → C (mean time ~5 days, with ~60% going to C)
+    σ2::T = 365/7       # C → R (mean time in C ~10 days)
+    σ3::T = 365/14          # I → R (mean time ~5 days, with ~40% going directly to R)
+    λ::T = 0.75         # waning immunity R → S (mean ~3 years)
+    αEpi::T = 10/70     # additional C → S hazard (tuned so death-probability while in C is small)
 
 
     # ECON PARAMETERS
@@ -30,7 +27,7 @@
     dC::T = 0.2           # disutility of being Contained
     γ::T = 10.0           # coefficient quadratic cost of propensity to vaccination
     qMax::T = 100.0       # cap on vaccination intensity for numerics (q >= 0, bounded above by qMax)
-    θ::T = 0.75            # preference consumption vs leisure [0,1]
+    θ::T = 0.75           # preference consumption vs leisure [0,1]
     ηS::T = 1.0           # productivity of Susceptible agents (benchmark)
     ηI::T = 0.7           # reduced productivity of Infected agents (<1)
     ηC::T = 0.0           # productivity of Contained agents (do not produce)
@@ -45,7 +42,7 @@
     k::LinRange{T, Int64} = LinRange(0,MaxK,Nk) # capital grid
 
     # Temporal domain
-    T_End::T = 4.0            # End time (measured in years)
+    T_End::T = 8.0            # End time (measured in years)
     t_save::LinRange{T, Int64} = LinRange(0,T_End,1000)
 
     # numerical FP/KFE solver (distribution dynamics)
@@ -113,7 +110,7 @@ vector, normalized so that total mass integrates to 1 on the capital grid.
 function create_test_distribution(p)
     # Early-epidemic initial condition (shares; total mass integrates to 1).
     # Keep C and R near zero and start with a small prevalence of I.
-    i0 = 1e-1
+    i0 = 1e-4
     c0 = 0.0
     r0 = 0.0
     s0 = 1.0 - i0 - c0 - r0
@@ -156,4 +153,3 @@ function create_test_distribution(p)
     Rt .*= (r0 == 0 ? 0.0 : (r0 / (sum(Rt) * p.Δk)))
     return (ϕSt = St, ϕIt = It, ϕCt = Ct, ϕRt = Rt)
 end
-

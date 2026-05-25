@@ -1,4 +1,6 @@
-include("L_loadAll.jl")
+include("../src/EpiEconMFG.jl")
+using .EpiEconMFG
+using Plots
 p = MFGEpiEcon(verbose=true)
 Ft = create_test_distribution(p)
 
