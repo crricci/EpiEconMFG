@@ -20,7 +20,10 @@ export MFGEpiEcon,
     T_HJB,
     build_HJB_linear_system,
     compute_FP_policies,
+    compute_FP_policies_dynamic,
+    compute_time_dependent_policies,
     build_FP_generator,
+    solve_fp_forward_dynamic,
     stack_distribution,
     unstack_distribution,
     renormalize_distribution!,
@@ -32,8 +35,12 @@ export MFGEpiEcon,
     optimal_labor_ALL,
     aggregate_labor_supply,
     aggregate_kapital,
+    compute_aggregates_path,
+    compute_prices_path,
     fixed_point_wage,
     T_wage,
+    solve_hjb_backward,
+    solveModelDynamic,
     save_all_figures
 
 include("core/parameters.jl")
@@ -43,7 +50,9 @@ include("core/aggregates.jl")
 include("solvers/wage_legacy.jl")
 include("solvers/hjb_stationary.jl")
 include("solvers/fp_kfe.jl")
+include("solvers/hjb_time_dependent.jl")
 include("solvers/coupled_quasistatic.jl")
+include("solvers/coupled_forward_backward.jl")
 
 include("visualization/plots.jl")
 

@@ -63,6 +63,18 @@
     tolWage::T = 1e-3          # convergence tolerance for wage fixed point
     maxitWage::Int = 500        # maximum iterations for wage fixed point
 
+    # dynamic forward-backward solver
+    maxIterDynamic::Int = 100
+    tolDynamic::T = 1e-6
+    ωF_dynamic::T = 0.05
+    ωV_dynamic::T = 0.25
+    maxIterHJBDynamic::Int = 30
+    tolHJBDynamic::T = 1e-7
+    ωHJBDynamic::T = 0.5
+    dynamicInitialGuess::Symbol = :quasistatic
+    dynamicTerminal::Symbol = :fixed_quasistatic
+    dynamicVerbose::Bool = true
+
 
     # progress (when verbose=false but you still want to monitor iteration counters)
     progressWage_every::Int = 5   # show wage iteration counter every this many wage FP iterations

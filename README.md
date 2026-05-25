@@ -80,6 +80,32 @@ result = solveModel(p, F0; show_progress=false, save_stride=2)
 
 If $\mathrm{HJB\_every}>1$, controls are frozen between HJB updates for speed.
 
+### Fully dynamic forward-backward solver
+
+The quasi-static solver remains `solveModel`. The fully dynamic solver is available as
+`solveModelDynamic` (or `run_dynamic()` from `main.jl`). It uses the quasi-static path as
+the default initial guess, then iterates on the full distribution path:
+
+```julia
+include("main.jl")
+
+p = EpiEconMFG.MFGEpiEcon(
+    maxIterDynamic = 20,
+    ωF_dynamic = 0.05,
+    ωV_dynamic = 0.25,
+)
+F0 = EpiEconMFG.create_test_distribution(p)
+
+result = run_dynamic(p = p, F0 = F0, show_progress = true)
+```
+
+At each Picard iteration, prices and aggregates are computed from the current path, the
+time-dependent HJB is solved backward with backward Euler, and the FP/KFE is solved
+forward with the resulting controls. The return object follows the same broad shape as
+`solveModel` (`t`, `F`, `V`, `controls`) and additionally includes `prices`,
+`aggregates`, `diagnostics`, `converged`, `iterations`, and
+`method = :forward_backward_dynamic`.
+
 ## Math problem that we are solving
 
 ### States and controls

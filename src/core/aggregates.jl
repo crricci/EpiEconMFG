@@ -56,3 +56,51 @@ function aggregate_kapital(Ft, p)
     K = KS + KI + KC + KR
     return K
 end
+
+function infected_labor_supply(lOpt, Ft, p)
+    return sum(lOpt.lI .* Ft.ϕIt) * p.Δk
+end
+
+function aggregate_labor_supply_path(F_path, controls_path, p)
+    Nt = length(F_path)
+    L = Vector{Float64}(undef, Nt)
+    @inbounds for n in 1:Nt
+        L[n] = aggregate_labor_supply(controls_path[n].lOpt, F_path[n], p)
+    end
+    return L
+end
+
+function compute_aggregates_path(F_path, controls_path, p)
+    Nt = length(F_path)
+    if length(controls_path) != Nt
+        error("F_path and controls_path must have the same length")
+    end
+
+    K = Vector{Float64}(undef, Nt)
+    L = Vector{Float64}(undef, Nt)
+    LI = Vector{Float64}(undef, Nt)
+
+    @inbounds for n in 1:Nt
+        Ft = F_path[n]
+        lOpt = controls_path[n].lOpt
+        K[n] = aggregate_kapital(Ft, p)
+        L[n] = aggregate_labor_supply(lOpt, Ft, p)
+        LI[n] = infected_labor_supply(lOpt, Ft, p)
+    end
+
+    return (K = K, L = L, LI = LI)
+end
+
+function compute_prices_path(F_path, controls_path, p)
+    agg = compute_aggregates_path(F_path, controls_path, p)
+    Nt = length(F_path)
+    w = Vector{Float64}(undef, Nt)
+    r = Vector{Float64}(undef, Nt)
+
+    @inbounds for n in 1:Nt
+        w[n] = wage(agg.K[n], agg.L[n], p)
+        r[n] = returns(agg.K[n], agg.L[n], p)
+    end
+
+    return (w = w, r = r, K = agg.K, L = agg.L, LI = agg.LI)
+end

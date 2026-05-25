@@ -19,3 +19,19 @@ function run(;
 
     return result
 end
+
+"""
+    run_dynamic(; p=EpiEconMFG.MFGEpiEcon(), F0=EpiEconMFG.create_test_distribution(p), show_progress=true, kwargs...)
+
+Convenience entry point for the fully dynamic forward-backward solver.
+"""
+function run_dynamic(;
+    p = EpiEconMFG.MFGEpiEcon(),
+    F0 = EpiEconMFG.create_test_distribution(p),
+    show_progress = true,
+    kwargs...,
+)
+    result = EpiEconMFG.solveModelDynamic(p, F0; show_progress = show_progress, kwargs...)
+
+    return result
+end

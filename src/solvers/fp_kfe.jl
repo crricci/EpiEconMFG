@@ -126,6 +126,107 @@ function compute_FP_policies(V, Ft, p; w, t=0.0, deriv_cache=nothing)
     )
 end
 
+"""
+    compute_time_dependent_policies(V, Ft, p; w, r, LI, t=0.0, deriv_cache=nothing)
+
+Compute controls for the fully dynamic solver using externally supplied price paths.
+
+Unlike `compute_FP_policies`, this helper does not recompute the wage or interest rate
+from a local wage fixed point. It treats `w`, `r`, and `LI` as the Picard-iteration
+inputs for the current time node and is shared by the dynamic HJB and FP steps.
+"""
+function compute_time_dependent_policies(V, Ft, p; w, r, LI, t=0.0, deriv_cache=nothing)
+    ∂V = isnothing(deriv_cache) ? compute_∂V_dk(V, p) : compute_∂V_dk!(deriv_cache, V, p)
+
+    denomS = max.(∂V.∂kVS, sqrt(p.ϵDkUp))
+    WS = p.ηS * w .+ p.β * LI .* (V.VI .- V.VS) ./ denomS
+    WI = p.ηI * w
+    WR = p.ηR * w
+
+    lS = optimal_labor(∂V.∂kVS, WS, p)
+    lI = optimal_labor(∂V.∂kVI, WI, p)
+    lC = zeros(eltype(lS), p.Nk)
+    lR = optimal_labor(∂V.∂kVR, WR, p)
+    lOpt = (lS = lS, lI = lI, lC = lC, lR = lR)
+
+    capital_income = (r - p.δ) .* p.k
+
+    cS = p.θ ./ ∂V.∂kVS
+    cI = p.θ ./ ∂V.∂kVI
+    cC = p.θ ./ ∂V.∂kVC
+    cR = p.θ ./ ∂V.∂kVR
+
+    incomeS = capital_income .+ (p.ηS * w) .* lS
+    incomeI = capital_income .+ (p.ηI * w) .* lI
+    incomeC = capital_income
+    incomeR = capital_income .+ (p.ηR * w) .* lR
+
+    ξS = vaccine_monetary_cost.(t, p.k, Ref(p))
+    q_rate = clamp.((V.VR .- V.VS .- ξS .* ∂V.∂kVS) ./ p.γ, 0.0, p.qMax)
+    availableS = incomeS .- ξS .* q_rate
+
+    cS[1] = min(cS[1], max(availableS[1], 0.0))
+    cI[1] = min(cI[1], max(incomeI[1], 0.0))
+    cC[1] = min(cC[1], max(incomeC[1], 0.0))
+    cR[1] = min(cR[1], max(incomeR[1], 0.0))
+
+    cS[end] = max(cS[end], max(availableS[end], 0.0))
+    cI[end] = max(cI[end], max(incomeI[end], 0.0))
+    cC[end] = max(cC[end], max(incomeC[end], 0.0))
+    cR[end] = max(cR[end], max(incomeR[end], 0.0))
+
+    bS = availableS .- cS
+    bI = incomeI .- cI
+    bC = incomeC .- cC
+    bR = incomeR .- cR
+
+    bS[1] = max(bS[1], 0.0); bS[end] = min(bS[end], 0.0)
+    bI[1] = max(bI[1], 0.0); bI[end] = min(bI[end], 0.0)
+    bC[1] = max(bC[1], 0.0); bC[end] = min(bC[end], 0.0)
+    bR[1] = max(bR[1], 0.0); bR[end] = min(bR[end], 0.0)
+
+    infection_rate = p.β .* lS .* LI
+    epsu = p.ϵDkUp
+    v_cost = -0.5 .* p.γ .* (q_rate .^ 2)
+
+    uS = p.θ .* log.(max.(cS, epsu)) .+ (1 - p.θ) .* log.(max.(1 .- lS, epsu)) .+ v_cost
+    uI = p.θ .* log.(max.(cI, epsu)) .+ (1 - p.θ) .* log.(max.(1 .- lI, epsu)) .- p.dI
+    uC = p.θ .* log.(max.(cC, epsu)) .- p.dC
+    uR = p.θ .* log.(max.(cR, epsu)) .+ (1 - p.θ) .* log.(max.(1 .- lR, epsu))
+
+    K = aggregate_kapital(Ft, p)
+    L = aggregate_labor_supply(lOpt, Ft, p)
+
+    return (
+        lOpt = lOpt,
+        W = (WS = WS, WI = WI, WC = 0.0, WR = WR),
+        cS = cS,
+        cI = cI,
+        cC = cC,
+        cR = cR,
+        bS = bS,
+        bI = bI,
+        bC = bC,
+        bR = bR,
+        infection_rate = infection_rate,
+        q_rate = q_rate,
+        ξS = ξS,
+        uS = uS,
+        uI = uI,
+        uC = uC,
+        uR = uR,
+        K = K,
+        L = L,
+        w = w,
+        r = r,
+        LI = LI,
+    )
+end
+
+function compute_FP_policies_dynamic(V, Ft, p; w, r, LI, t=0.0, deriv_cache=nothing)
+    return compute_time_dependent_policies(V, Ft, p; w=w, r=r, LI=LI, t=t, deriv_cache=deriv_cache)
+end
+
 # Assemble drift operator for forward equation in conservative upwind form.
 """
     add_forward_drift_entries!(I, J, X, offset, b, p)
@@ -267,6 +368,71 @@ function project_nonnegative!(phi)
         phi[i] = max(phi[i], 0.0)
     end
     return phi
+end
+
+function distribution_mass(Ft, p)
+    return (sum(Ft.ϕSt) + sum(Ft.ϕIt) + sum(Ft.ϕCt) + sum(Ft.ϕRt)) * p.Δk
+end
+
+function solve_fp_forward_dynamic(F0, controls_path, w_path, r_path, LI_path, p; dt=nothing, t=nothing)
+    Nt = length(controls_path)
+    if Nt < 2
+        error("controls_path must contain at least two time nodes")
+    end
+
+    dt_eff = isnothing(dt) ? p.Δt : dt
+    if !(isfinite(dt_eff) && dt_eff > 0)
+        error("dt must be finite and > 0")
+    end
+
+    phi = F0 isa AbstractVector ? copy(F0) : copy(stack_distribution(F0))
+    renormalize_distribution!(phi, p)
+
+    F_path = Vector{Any}(undef, Nt)
+    F_path[1] = unstack_distribution(copy(phi), p)
+
+    mass_before = zeros(Float64, Nt - 1)
+    mass_after_solve = zeros(Float64, Nt - 1)
+    mass_after_project = zeros(Float64, Nt - 1)
+    normalization_correction = zeros(Float64, Nt - 1)
+    min_density_before_project = zeros(Float64, Nt - 1)
+    max_negative_before_project = zeros(Float64, Nt - 1)
+
+    nstate = 4 * p.Nk
+    Iden = spdiagm(0 => ones(eltype(phi), nstate))
+
+    @inbounds for n in 1:(Nt - 1)
+        pol = controls_path[n]
+        G = build_FP_generator(pol, p)
+        A = Iden - dt_eff * G
+
+        mass_before[n] = sum(phi) * p.Δk
+        phi_candidate = lu(A) \ phi
+        mass_after_solve[n] = sum(phi_candidate) * p.Δk
+
+        min_before = minimum(phi_candidate)
+        min_density_before_project[n] = min_before
+        max_negative_before_project[n] = min(0.0, min_before)
+
+        phi .= phi_candidate
+        project_nonnegative!(phi)
+        mass_after_project[n] = sum(phi) * p.Δk
+        mass_pre_norm = renormalize_distribution!(phi, p)
+        normalization_correction[n] = abs(mass_pre_norm - 1.0)
+
+        F_path[n + 1] = unstack_distribution(copy(phi), p)
+    end
+
+    diagnostics = (
+        mass_before = mass_before,
+        mass_after_solve = mass_after_solve,
+        mass_after_project = mass_after_project,
+        normalization_correction = normalization_correction,
+        min_density_before_project = min_density_before_project,
+        max_negative_before_project = max_negative_before_project,
+    )
+
+    return F_path, diagnostics
 end
 
 """
