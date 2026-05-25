@@ -1,419 +1,904 @@
 # EpiEconMFG
 
-Julia code for an epidemic-economic Mean Field Game (MFG) with heterogeneous agents over capital and epidemiological states.
+Codice Julia per un Mean Field Game epidemiologico-economico con agenti
+eterogenei per ricchezza/capitale e stato epidemiologico.
 
-The code solves:
-- A stationary-in-form HJB system (re-solved over time because aggregates and infection depend on the current distribution).
-- A forward Kolmogorov / Fokker-Planck (FP/KFE) equation for the joint distribution over capital and health states.
-- A coupled numerical scheme with FP time-marching as the outer loop, a wage fixed point as an outer stationary loop, and HJB value iteration as the inner stationary loop.
+Il progetto contiene due livelli di soluzione:
 
-## Code structure and code usage
+1. Il problema dinamico completo, in cui sia la HJB sia la Fokker-Planck sono
+   dipendenti dal tempo. Questo è il problema principale.
+2. Un problema quasi-stazionario, in cui la Fokker-Planck evolve nel tempo ma a
+   ogni data si risolve una HJB stazionaria dato lo stato corrente della
+   distribuzione. Questo non è la soluzione del problema dinamico completo, ma è
+   utile come benchmark, diagnostica e inizializzazione del solver dinamico.
 
-### Repository structure
+La versione corrente include anche un costo monetario esogeno del vaccino
+`ξ(t,k)`. Al momento la funzione è costante ed è controllata da `p.ξ`, con
+valore di riferimento `0.001`.
 
-```text
-main.jl                         # `run()` entrypoint for interactive experiments
-src/EpiEconMFG.jl               # Main module and includes
-src/core/parameters.jl          # Parameters, prices, and initial distribution
-src/core/diff.jl                # Safe first derivative on capital grid
-src/core/aggregates.jl          # Optimal labor and aggregate K, L
-src/solvers/hjb_stationary.jl   # Current stationary-form HJB solver
-src/solvers/hjb_time_dependent.jl # Placeholder for the future backward HJB
-src/solvers/fp_kfe.jl           # FP/KFE policies, generator, and implicit Euler
-src/solvers/coupled_quasistatic.jl # Current hybrid FP-time / stationary-HJB loop
-src/solvers/coupled_forward_backward.jl # Placeholder for the future true MFG loop
-src/solvers/wage_legacy.jl      # Alternative wage fixed-point helper, kept for reference
-src/visualization/plots.jl      # Figure generation
-scripts/debug_hjb.jl            # HJB diagnostics / residual checks
-scripts/debug_fp.jl             # FP diagnostics
-docs/                          # Notes for model/architecture changes
-outputs/                       # Generated outputs, ignored by git
-```
+## Come Eseguire
 
-### Main data objects
-
-- Distribution at one time: $F_t=(\phi_S(t,\cdot),\phi_I(t,\cdot),\phi_C(t,\cdot),\phi_R(t,\cdot))$, stored as `Ft = (ϕSt, ϕIt, ϕCt, ϕRt)` (each vector length `Nk`).
-- Value functions: `V = (VS, VI, VC, VR)`, each vector length `Nk`.
-- Coupled output from `solveModel`:
-  - `result.t`: saved time grid.
-  - `result.F`: saved distributions.
-  - `result.V`: saved HJB solutions and wage.
-  - `result.controls`: saved controls and drifts used in FP.
-
-### How to run
+Da shell:
 
 ```bash
-julia --project=. -e 'using Pkg; Pkg.instantiate(); include("main.jl"); run()'
+julia --project=. -e 'using Pkg; Pkg.instantiate(); include("main.jl"); result = run_dynamic()'
 ```
 
-Equivalent from REPL:
-
-```julia
-include("src/EpiEconMFG.jl")
-using .EpiEconMFG
-
-p = MFGEpiEcon()
-F0 = create_test_distribution(p)
-
-result = solveModel(p, F0; show_progress=true)
-save_all_figures(result, p; outdir="outputs/figures")
-```
-
-### Typical customization
-
-```julia
-include("src/EpiEconMFG.jl")
-using .EpiEconMFG
-
-p = MFGEpiEcon(
-    MaxK = 80.0,
-    Δk = 0.5,
-    T_End = 3.0,
-    Δt = 0.02,
-    HJB_every = 1,
-    verbose = true
-)
-
-F0 = create_test_distribution(p)
-result = solveModel(p, F0; show_progress=false, save_stride=2)
-```
-
-If $\mathrm{HJB\_every}>1$, controls are frozen between HJB updates for speed.
-
-### Fully dynamic forward-backward solver
-
-The quasi-static solver remains `solveModel`. The fully dynamic solver is available as
-`solveModelDynamic` (or `run_dynamic()` from `main.jl`). It uses the quasi-static path as
-the default initial guess, then iterates on the full distribution path:
+Da REPL Julia:
 
 ```julia
 include("main.jl")
 
-p = EpiEconMFG.MFGEpiEcon(
-    maxIterDynamic = 20,
-    ωF_dynamic = 0.05,
-    ωV_dynamic = 0.25,
-)
+p = EpiEconMFG.MFGEpiEcon()
 F0 = EpiEconMFG.create_test_distribution(p)
 
 result = run_dynamic(p = p, F0 = F0, show_progress = true)
+
+EpiEconMFG.save_all_figures(
+    result,
+    p;
+    outdir = "outputs/dynamic_figures",
+    with_surfaces = true,
+)
 ```
 
-At each Picard iteration, prices and aggregates are computed from the current path, the
-time-dependent HJB is solved backward with backward Euler, and the FP/KFE is solved
-forward with the resulting controls. The return object follows the same broad shape as
-`solveModel` (`t`, `F`, `V`, `controls`) and additionally includes `prices`,
-`aggregates`, `diagnostics`, `converged`, `iterations`, and
-`method = :forward_backward_dynamic`.
+Per eseguire il solver quasi-stazionario:
 
-## Math problem that we are solving
+```julia
+include("main.jl")
 
-### States and controls
+p = EpiEconMFG.MFGEpiEcon()
+F0 = EpiEconMFG.create_test_distribution(p)
 
-- Epidemiological states: `S` (susceptible), `I` (infected), `C` (contained), `R` (recovered).
-- Individual state variable: capital $k\ge 0$.
-- Controls: consumption $c$, labor $l$ (with $l_C=0$ in implementation), and vaccination intensity $q$ for susceptible agents.
+result_qs = run(p = p, F0 = F0, show_progress = true)
+```
 
-### Forward equation (FP/KFE)
+## Struttura Del Progetto
 
-Let $\phi_e(t,k)$ be the cross-sectional density in state $e$.
+```text
+main.jl
+    Entry point interattivi:
+    - run() per il solver quasi-stazionario
+    - run_dynamic() per il solver dinamico completo
 
-For `S`:
+src/EpiEconMFG.jl
+    Modulo principale e lista degli include/export.
+
+src/core/parameters.jl
+    Parametri del modello, griglie, prezzi, distribuzione iniziale,
+    funzione esogena ξ(t,k).
+
+src/core/diff.jl
+    Derivate finite sicure su griglia del capitale.
+
+src/core/aggregates.jl
+    Lavoro ottimo statico, aggregati K, L, LI, prezzi w e r.
+
+src/solvers/hjb_time_dependent.jl
+    HJB dinamica backward in time.
+
+src/solvers/coupled_forward_backward.jl
+    Punto fisso forward-backward del problema dinamico completo.
+
+src/solvers/hjb_stationary.jl
+    HJB stazionaria usata dal metodo quasi-stazionario.
+
+src/solvers/fp_kfe.jl
+    Generatore FP/KFE, politiche, forward equation e implicit Euler.
+
+src/solvers/coupled_quasistatic.jl
+    Loop FP forward + HJB stazionaria ricomputata lungo il tempo.
+
+src/visualization/plots.jl
+    Funzioni per generare le figure.
+
+scripts/
+    Script di debug, smoke test e diagnostica numerica.
+
+docs/
+    Appunti di sviluppo.
+
+outputs/
+    Output numerici e figure generate.
+```
+
+## Stato, Controlli E Oggetti Numerici
+
+Gli stati epidemiologici sono:
+
+```text
+S = susceptible
+I = infected
+C = contained
+R = recovered
+```
+
+Lo stato individuale continuo è il capitale `k ∈ [0, MaxK]`.
+
+Le densità sono:
+
+```math
+\phi_e(t,k), \qquad e \in \{S,I,C,R\}.
+```
+
+Nel codice una distribuzione a una data è un `NamedTuple`:
+
+```julia
+Ft = (ϕSt = ..., ϕIt = ..., ϕCt = ..., ϕRt = ...)
+```
+
+Le value functions sono:
+
+```julia
+V = (VS = ..., VI = ..., VC = ..., VR = ...)
+```
+
+I controlli individuali sono:
+
+```math
+c(t,k,e) \ge 0, \qquad l(t,k,e) \in [0,1],
+```
+
+e, solo per i suscettibili,
+
+```math
+q(t,k) \ge 0.
+```
+
+Nel codice `q` è anche troncato superiormente da `p.qMax` per stabilità numerica.
+
+La funzione di utilità corrente è:
+
+```math
+u(c,l) = \theta \log(c) + (1-\theta)\log(1-l).
+```
+
+Per i contenuti si usa `l_C=0`, quindi il flow payoff di `C` non contiene il
+termine di leisure nel modo standard degli altri stati produttivi.
+
+## Aggregati E Prezzi
+
+La massa di lavoro infetto che entra nell'esternalità di contagio è:
+
+```math
+L_I(t) = \int l_I(t,k)\phi_I(t,k)\,dk.
+```
+
+Il capitale aggregato è:
+
+```math
+K(t) =
+\sum_{e\in\{S,I,C,R\}}
+\int k \phi_e(t,k)\,dk.
+```
+
+Il lavoro aggregato efficace è:
+
+```math
+L(t) =
+\eta_S \int l_S(t,k)\phi_S(t,k)\,dk
++ \eta_I \int l_I(t,k)\phi_I(t,k)\,dk
++ \eta_C \int l_C(t,k)\phi_C(t,k)\,dk
++ \eta_R \int l_R(t,k)\phi_R(t,k)\,dk.
+```
+
+Con produzione Cobb-Douglas:
+
+```math
+Y(t) = A K(t)^\alpha L(t)^{1-\alpha}.
+```
+
+I prezzi competitivi sono:
+
+```math
+r(t) =
+\alpha A K(t)^{\alpha-1} L(t)^{1-\alpha},
+```
+
+```math
+w(t) =
+(1-\alpha)A K(t)^\alpha L(t)^{-\alpha}.
+```
+
+## Problema Dinamico Completo
+
+Il problema dinamico completo è un sistema forward-backward:
+
+- la HJB è risolta backward in time;
+- la Fokker-Planck è risolta forward in time;
+- prezzi e aggregati dipendono dalla distribuzione e dai controlli;
+- contagio e vaccino collegano le equazioni dei diversi stati epidemiologici.
+
+### Funzionale Dell'Household
+
+Per un agente, il problema continuo corrispondente è:
+
+```math
+\max_{c,l,q}
+\mathbb{E}
+\left[
+\int_0^T e^{-\rho t}
+\left(
+u(c_t,l_t)
+- d_I \mathbf{1}_{\{e_t=I\}}
+- d_C \mathbf{1}_{\{e_t=C\}}
+- \frac{\gamma}{2}q_t^2 \mathbf{1}_{\{e_t=S\}}
+\right)dt
++ e^{-\rho T}V_T(e_T,k_T)
+\right].
+```
+
+Il costo monetario del vaccino non entra come disutilità additiva. Entra nel
+vincolo di bilancio del suscettibile:
+
+```math
+\dot{k}_S =
+(r(t)-\delta)k
++ w(t)\eta_S l_S
+- c_S
+- \xi(t,k)q.
+```
+
+Gli altri drift di capitale sono:
+
+```math
+\dot{k}_I =
+(r(t)-\delta)k
++ w(t)\eta_I l_I
+- c_I,
+```
+
+```math
+\dot{k}_C =
+(r(t)-\delta)k
+- c_C,
+```
+
+```math
+\dot{k}_R =
+(r(t)-\delta)k
++ w(t)\eta_R l_R
+- c_R.
+```
+
+Nel codice si indica:
+
+```math
+b_e(t,k) = \dot{k}_e(t,k).
+```
+
+### HJB Dinamica
+
+La forma continua della HJB dinamica è:
+
+```math
+\rho V_e(t,k)
+=
+\partial_t V_e(t,k)
++ \max_{\text{controlli}}
+\left\{
+\text{flow payoff}
++ b_e(t,k)\partial_k V_e(t,k)
++ \text{transizioni epidemiologiche}
+\right\}.
+```
+
+Per i suscettibili:
+
+```math
+\rho V_S(t,k)
+=
+\partial_t V_S(t,k)
++ \max_{c\ge 0,\;l\in[0,1],\;q\ge 0}
+\Big\{
+u(c,l)
+- \frac{\gamma}{2}q^2
++ \partial_k V_S(t,k)
+\big[
+(r(t)-\delta)k + w(t)\eta_S l - c - \xi(t,k)q
+\big]
+```
+
+```math
+\qquad
++ q\big[V_R(t,k)-V_S(t,k)\big]
++ \beta l L_I(t)\big[V_I(t,k)-V_S(t,k)\big]
+\Big\}.
+```
+
+Per gli infetti:
+
+```math
+\rho V_I(t,k)
+=
+\partial_t V_I(t,k)
++ \max_{c\ge 0,\;l\in[0,1]}
+\Big\{
+u(c,l) - d_I
++ \partial_k V_I(t,k)
+\big[(r(t)-\delta)k+w(t)\eta_I l-c\big]
+```
+
+```math
+\qquad
++ \mu\big[V_S(t,k)-V_I(t,k)\big]
++ \sigma_1\big[V_C(t,k)-V_I(t,k)\big]
++ \sigma_3\big[V_R(t,k)-V_I(t,k)\big]
+\Big\}.
+```
+
+Per i contenuti:
+
+```math
+\rho V_C(t,k)
+=
+\partial_t V_C(t,k)
++ \max_{c\ge 0}
+\Big\{
+\theta\log(c) - d_C
++ \partial_k V_C(t,k)\big[(r(t)-\delta)k-c\big]
+```
+
+```math
+\qquad
++ (\alpha_{Epi}+\mu)\big[V_S(t,k)-V_C(t,k)\big]
++ \sigma_2\big[V_R(t,k)-V_C(t,k)\big]
+\Big\}.
+```
+
+Per i recovered:
+
+```math
+\rho V_R(t,k)
+=
+\partial_t V_R(t,k)
++ \max_{c\ge 0,\;l\in[0,1]}
+\Big\{
+u(c,l)
++ \partial_k V_R(t,k)
+\big[(r(t)-\delta)k+w(t)\eta_R l-c\big]
+```
+
+```math
+\qquad
++ (\lambda+\mu)\big[V_S(t,k)-V_R(t,k)\big]
+\Big\}.
+```
+
+La condizione terminale implementata oggi è:
+
+```math
+V(T,\cdot) = V_T(\cdot),
+```
+
+dove `V_T` è preso dalla soluzione quasi-stazionaria all'ultima data quando
+`dynamicTerminal = :fixed_quasistatic`.
+
+### Risposta Del Vaccino
+
+Dal termine in `q` nella HJB dei suscettibili:
+
+```math
+-\frac{\gamma}{2}q^2
++ q(V_R-V_S)
+- \xi(t,k)q\partial_k V_S,
+```
+
+la FOC interna dà:
+
+```math
+q^*(t,k)
+=
+\frac{V_R(t,k)-V_S(t,k)-\xi(t,k)\partial_k V_S(t,k)}{\gamma}.
+```
+
+Nel codice:
+
+```math
+q^*(t,k)
+=
+\min\left\{
+q_{\max},
+\max\left\{0,
+\frac{V_R(t,k)-V_S(t,k)-\xi(t,k)\partial_k V_S(t,k)}{\gamma}
+\right\}
+\right\}.
+```
+
+Quindi il termine con `ξ` è anch'esso diviso per `γ`.
+
+### Fokker-Planck Dinamica
+
+Definiamo:
+
+```math
+\nu(t,k) = \beta l_S(t,k)L_I(t).
+```
+
+La FP/KFE completa risolta in avanti è:
 
 ```math
 \partial_t \phi_S
-= \mu(\phi_S+\phi_I+\phi_C+\phi_R)
-+ \alpha_E\phi_C
-- \mu\phi_S
-- q^*(t,k)\phi_S
-- \beta l_S^*(t,k)\phi_S L_I
-+ \lambda\phi_R
-- \partial_k\!\left(\phi_S b_S\right),
+=
+-\partial_k\big(\phi_S b_S\big)
+- \big(\nu+q\big)\phi_S
++ \mu\phi_I
++ (\alpha_{Epi}+\mu)\phi_C
++ (\lambda+\mu)\phi_R.
 ```
-
-where
-```math
-b_S=(r_t-\delta)k + w_t\eta(S)l_S^*(t,k)-c_S^*(t,k)-\xi(t,k)q^*(t,k).
-```
-
-For `I`:
 
 ```math
 \partial_t \phi_I
-= -(\sigma_1+\mu+\sigma_3)\phi_I
-+ \beta l_S^*(t,k)\phi_S L_I
-- \partial_k\!\left(\phi_I b_I\right),
+=
+-\partial_k\big(\phi_I b_I\big)
++ \nu\phi_S
+- (\sigma_1+\sigma_3+\mu)\phi_I.
 ```
-```math
-b_I=(r_t-\delta)k + w_t\eta(I)l_I^*(t,k)-c_I^*(t,k).
-```
-
-For `C`:
 
 ```math
 \partial_t \phi_C
-= \sigma_1\phi_I
-- (\alpha_E+\sigma_2+\mu)\phi_C
-- \partial_k\!\left(\phi_C b_C\right),
+=
+-\partial_k\big(\phi_C b_C\big)
++ \sigma_1\phi_I
+- (\alpha_{Epi}+\sigma_2+\mu)\phi_C.
 ```
-```math
-b_C=(r_t-\delta)k-c_C^*(t,k).
-```
-
-For `R`:
 
 ```math
 \partial_t \phi_R
-= \sigma_2\phi_C + \sigma_3\phi_I - (\lambda+\mu)\phi_R + q^*(t,k)\phi_S
-- \partial_k\!\left(\phi_R b_R\right),
-```
-```math
-b_R=(r_t-\delta)k + w_t\eta(R)l_R^*(t,k)-c_R^*(t,k).
-```
-
-Aggregate infected labor term:
-
-```math
-L_I(t)=\int l_I^*(t,k)\phi_I(t,k)\,dk.
+=
+-\partial_k\big(\phi_R b_R\big)
++ q\phi_S
++ \sigma_3\phi_I
++ \sigma_2\phi_C
+- (\lambda+\mu)\phi_R.
 ```
 
-### Household objective and HJB system
-
-The model solves (state-contingent) dynamic programs with discount $ρ$.
-Utility in code is implemented as:
+Per `S`, il drift include esplicitamente la spesa monetaria per vaccinarsi:
 
 ```math
-u(c,l)=\theta\log(c)+(1-\theta)\log(1-l),
+b_S(t,k)
+=
+(r(t)-\delta)k
++ w(t)\eta_S l_S(t,k)
+- c_S(t,k)
+- \xi(t,k)q(t,k).
 ```
 
-with additional health disutility $d_I$, $d_C$, vaccination utility cost
-$-\frac{\gamma}{2}q^2$, and monetary vaccination cost $\xi(t,k)q$ in the
-susceptible household budget.
+### Schema Di Punto Fisso Dinamico
 
-Representative objective (state-dependent controls and transitions):
+Il solver dinamico principale è `solveModelDynamic`, chiamato da `run_dynamic`.
 
-```math
-\max_{(c,l,q)}\;\mathbb{E}\!\left[\int_0^\infty e^{-\rho t}
-\left(
-u(c_t, l_t)
-- d_I\,\mathbf{1}_{\{e_t=I\}}
-- d_C\,\mathbf{1}_{\{e_t=C\}}
-- \frac{\gamma}{2}q_t^2
-\right)dt\right].
+L'idea è iterare su tutto il sentiero temporale:
+
+```text
+input: parametri p, distribuzione iniziale F0
+
+costruisci la griglia temporale t0,...,tN
+
+inizializza un sentiero (F_old, V_old, controls_old)
+    default: sentiero quasi-stazionario
+
+fissa VT = V_old[N]
+
+for m = 1,...,maxIterDynamic
+
+    1. Calcola aggregati e prezzi dal sentiero corrente:
+           K_old(t), L_old(t), LI_old(t)
+           w_old(t), r_old(t)
+
+    2. Risolvi la HJB backward:
+           dato F_old(t), w_old(t), r_old(t), LI_old(t)
+           e dato VT,
+           calcola V_new(t) da tN a t0
+
+    3. Ricostruisci le politiche:
+           controls_new(t) = policies[V_new(t), F_old(t), prices_old(t)]
+
+    4. Risolvi la FP forward:
+           dato F0 e controls_new(t),
+           calcola F_new(t) da t0 a tN
+
+    5. Calcola nuovi prezzi dal nuovo sentiero:
+           prices_new = prices[F_new, controls_new]
+
+    6. Calcola errori:
+           errF = distanza sup tra F_new e F_old
+           errV = distanza sup tra V_new e V_old
+           errW = distanza sup tra w_new e w_old
+           errR = distanza sup tra r_new e r_old
+           err  = max(errF, errV, errW, errR)
+
+    7. Se err < tolDynamic:
+           stop
+
+    8. Altrimenti aggiorna con damping:
+           F_old = (1-ωF_dynamic)F_old + ωF_dynamic F_new
+           V_old = (1-ωV_dynamic)V_old + ωV_dynamic V_new
+           controls_old = policies[V_old, F_old, prices(F_old)]
+
+output: sentiero F, V, controls, prices, aggregates, diagnostics
 ```
 
-HJB for `S`:
+### Schema Numerico Della HJB Dinamica
+
+Per ogni data `n`, andando backward, il codice risolve una HJB implicita:
 
 ```math
-\rho V_S(k)=\max_{c\ge0,\,l\in[0,1],\,q\ge0}
+\left[
+\rho I + \frac{1}{\Delta t}I - A(V^n) - Q(V^n)
+\right]V^n
+=
+u(V^n) + \frac{1}{\Delta t}V^{n+1}.
+```
+
+Qui:
+
+- `A` è l'operatore upwind associato al drift in capitale;
+- `Q` è il generatore delle transizioni epidemiologiche;
+- `u` contiene flow utility e disutilità sanitarie;
+- le politiche dipendono da `V^n`, quindi il sistema è risolto con un piccolo
+  punto fisso locale.
+
+Pseudocodice del passo HJB a una data:
+
+```text
+input: Vnext, guess Vn, Fn, prezzi al tempo n
+
+for j = 1,...,maxIterHJBDynamic
+    calcola ∂k Vn
+    calcola c, l, q e drift b
+    assembla matrice sparse della HJB implicita
+    risolvi il sistema lineare per V_candidate
+    residual = ||V_candidate - Vn||∞
+    Vn = (1-ωHJBDynamic)Vn + ωHJBDynamic V_candidate
+    se residual < tolHJBDynamic:
+        break
+
+return Vn
+```
+
+### Schema Numerico Della FP
+
+Dato un sentiero di controlli, la FP è risolta con implicit Euler:
+
+```math
+\left(I-\Delta t\,G^n\right)\phi^{n+1}=\phi^n.
+```
+
+`G^n` è il generatore forward, composto da:
+
+- blocchi di drift in forma conservativa e upwind;
+- transizioni locali `S -> I`, `S -> R`, `I -> C`, `I -> R`, `C -> S`,
+  `C -> R`, `R -> S`.
+
+Dopo ogni passo:
+
+1. si proietta la densità a valori non negativi;
+2. si rinormalizza la massa totale a 1;
+3. si salvano diagnostiche di massa e negatività numerica.
+
+## Problema Quasi-Stazionario
+
+Il metodo quasi-stazionario risolve una FP dipendente dal tempo, ma sostituisce
+la HJB dinamica con una HJB stazionaria ricomputata lungo il tempo.
+
+Alla data `t_n`, data la distribuzione corrente `F^n`, il solver tratta `F^n`,
+`L_I^n`, `w^n` e `r^n` come condizioni correnti e risolve:
+
+```math
+\rho V_e^n(k)
+=
+\max_{\text{controlli}}
 \left\{
-u(c,l)+V'_S(k)\big[(r-\delta)k+w l-c-\xi(t,k)q\big]
-+q\big(V_R-V_S\big)
-+\beta l L_I \big(V_I-V_S\big)
--\frac{\gamma}{2}q^2
+\text{flow payoff}
++ b_e^n(k)\partial_k V_e^n(k)
++ \text{transizioni epidemiologiche a }t_n
 \right\}.
 ```
 
-HJB for `I`:
+Rispetto alla HJB dinamica manca il termine:
 
 ```math
-\rho V_I(k)=\max_{c\ge0,\,l\in[0,1]}
-\left\{
-u(c,l)-d_I
-+V'_I(k)\big[(r-\delta)k+w\eta(I)l-c\big]
-+\sigma_1(V_C-V_I)+\mu(V_S-V_I)+\sigma_3(V_R-V_I)
-\right\}.
+\partial_t V_e(t,k).
 ```
 
-HJB for `C`:
+Per questo il metodo quasi-stazionario non incorpora aspettative sul sentiero
+futuro dell'epidemia, dei prezzi e della distribuzione. È una successione di
+problemi stazionari locali.
+
+### HJB Stazionaria
+
+Per i suscettibili:
 
 ```math
-\rho V_C(k)=\max_{c\ge0}
-\left\{
-\theta\log(c)-d_C
-+V'_C(k)\big[(r-\delta)k-c\big]
-+(\alpha_E+\mu)(V_S-V_C)+\sigma_2(V_R-V_C)
-\right\}.
-```
-
-HJB for `R`:
-
-```math
-\rho V_R(k)=\max_{c\ge0,\,l\in[0,1]}
-\left\{
-u(c,l)+V'_R(k)\big[(r-\delta)k+w l-c\big]
-+(\lambda+\mu)(V_S-V_R)
-\right\}.
-```
-
-### Aggregates and prices
-
-```math
-K_t=\sum_{e\in\{S,I,C,R\}}\int k\,\phi_e(t,k)\,dk,
-\quad
-L_t=\sum_e \eta(e)\int l_e^*(t,k)\phi_e(t,k)\,dk.
-```
-
-With production:
-
-```math
-Y_t=A K_t^\alpha L_t^{1-\alpha},
-\quad
-r_t=\alpha A K_t^{\alpha-1}L_t^{1-\alpha},
-\quad
-w_t=(1-\alpha)A K_t^\alpha L_t^{-\alpha}.
-```
-
-### Implemented policy formulas
-
-The code uses these pointwise controls from HJB FOCs:
-
-```math
-c_e^*(k)=\frac{\theta}{V'_e(k)},\qquad e\in\{S,I,C,R\},
+\rho V_S(k)
+=
+\max_{c\ge0,\;l\in[0,1],\;q\ge0}
+\Big\{
+u(c,l)
+- \frac{\gamma}{2}q^2
++ V'_S(k)\big[(r-\delta)k+w\eta_S l-c-\xi(t,k)q\big]
 ```
 
 ```math
-l_e^*(k)=\max\!\left(0,\min\!\left(1,1-\frac{1-\theta}{V'_e(k)W_e(k)}\right)\right),\qquad e\in\{S,I,R\},
+\qquad
++ q(V_R(k)-V_S(k))
++ \beta l L_I(V_I(k)-V_S(k))
+\Big\}.
 ```
-and $l_C^*=0$ (because $\eta_C=0$, implemented through effective wage clipping).
 
-Effective wages:
+Le equazioni per `I`, `C` e `R` sono le stesse del problema dinamico completo,
+ma senza `∂t V`.
+
+### Punto Fisso Su Wage E HJB
+
+Dentro ogni data, la HJB stazionaria è risolta con un punto fisso annidato:
+
+```text
+input: distribuzione Ft, guess V0, wage iniziale w_start
+
+for itw = 1,...,maxitWage
+
+    1. Tieni fisso w.
+
+    2. Risolvi la HJB a wage fisso:
+
+       for itV = 1,...,maxitHJBvalue
+           calcola ∂k V
+           calcola lavoro, consumo, vaccino e drift
+           assembla il sistema sparse:
+               (ρI - A - Q)V_candidate = u
+           risolvi il sistema lineare
+           errV = ||V_candidate - V||∞
+           V = (1-ω)V + ω V_candidate
+           se errV < tolHJBvalue:
+               break
+
+    3. Con V aggiornato, calcola:
+           K(Ft), L(V,Ft), w_implied(K,L), r(K,L)
+
+    4. errW = |w_implied - w|
+
+    5. Se errW < tolWage:
+           stop
+
+    6. Aggiorna:
+           w = (1-ωw)w + ωw w_implied
+
+output: V, w, errV, errW
+```
+
+### Loop Quasi-Stazionario Completo
+
+Il solver `solveModel`, chiamato da `run`, usa questo schema:
+
+```text
+input: F0, parametri p
+
+inizializza phi = F0
+inizializza guess V
+
+for n = 0,...,N-1
+
+    1. Ft = distribuzione corrente
+
+    2. Se è il primo passo o se scatta HJB_every:
+           risolvi HJB stazionaria + wage fixed point dato Ft
+       altrimenti:
+           riusa le politiche precedenti
+
+    3. Costruisci controlli e generatore FP G^n
+
+    4. Avanza la distribuzione:
+           (I - Δt G^n) phi^{n+1} = phi^n
+
+    5. Proietta a densità non negativa e rinormalizza
+
+    6. Salva distribuzione, value functions, controlli e prezzi
+
+output: t, F, V, controls
+```
+
+Con `HJB_every = 1` la HJB stazionaria viene ricomputata a ogni passo della FP.
+Con `HJB_every > 1` le politiche sono congelate per più passi, scelta utile solo
+per accelerare esperimenti esplorativi.
+
+## Inizializzazione Del Problema Dinamico
+
+Il solver dinamico parte per default da:
+
+```julia
+dynamicInitialGuess = :quasistatic
+```
+
+Questo significa:
+
+1. risolve prima il modello quasi-stazionario su tutta la griglia temporale;
+2. usa il sentiero ottenuto come guess iniziale per `F(t)`, `V(t)` e controlli;
+3. usa la value function quasi-stazionaria finale come terminale `V_T`;
+4. avvia il punto fisso forward-backward dinamico.
+
+Questa scelta è numericamente utile perché fornisce un sentiero già coerente con
+la FP e con le restrizioni statiche dei controlli, anche se non è ancora
+forward-looking.
+
+## Discretizzazione E Stabilità Numerica
+
+### Griglia Del Capitale
+
+La griglia è:
 
 ```math
-W_I=\eta_I w,\quad W_C=\eta_C w,\quad W_R=\eta_R w,
-```
-```math
-W_S(k)=\eta_S w + \beta L_I\frac{V_I(k)-V_S(k)}{V'_S(k)}.
-```
-
-Vaccination:
-
-```math
-q^*(t,k)=\min\!\left\{q_{\max},\max\!\left\{0,\frac{V_R(t,k)-V_S(t,k)-\xi(t,k)V'_S(t,k)}{\gamma}\right\}\right\}.
+k_i=(i-1)\Delta k,
+\qquad
+i=1,\ldots,N_k,
 ```
 
-## Numerical details
-
-### 1. Grids and time discretization
-
-- Capital grid: $k_i=(i-1)\Delta k$, $i=1,\dots,N_k$, with $N_k=\mathrm{Int}(\mathrm{MaxK}/\Delta k)+1$.
-- Time step for FP in `solveModel`:
-  - $N_{\mathrm{step}}=\lceil T_{\mathrm{End}}/\Delta t\rceil$.
-  - Effective step used in simulation: $\Delta t_{\mathrm{eff}}=T_{\mathrm{End}}/N_{\mathrm{step}}$.
-- States are stacked as a vector of length $4N_k$ in order $(S,I,C,R)$.
-
-### 2. Safe derivative and control stability
-
-`∂k_safe!` computes a numerical approximation of $\partial_k V_e(k)$ using:
-- One-sided differences at boundaries.
-- Central differences inside the domain.
-- A positivity floor `ϵDkUp` on $V'(k)$.
-
-This avoids division by zero in $c=\theta/V'$ and in labor/effective wage terms.
-
-### 3. HJB discretization and solver
-
-For fixed `w`, HJB is solved by repeated application of:
+con:
 
 ```math
-(\rho I - A - Q)V = u,
+N_k = \mathrm{Int}(MaxK/\Delta k)+1.
 ```
 
-where:
-- $A$ is the upwind advection matrix for $-b_e(k)\partial_k V_e(k)$.
-- $Q$ is the health-state transition generator.
-- $u$ is the flow utility vector.
+### Griglia Temporale
 
-Implementation specifics:
-- Upwind split at each grid point: $b^+=\max(b,0)$, $b^-=\min(b,0)$.
-- Sparse matrix assembled by triplets `(I,J,X)` then solved with sparse backslash.
-- Value iteration damping:
-  - $V\leftarrow (1-\omega)V+\omega T(V)$.
-- Convergence criterion:
-  - $\max_e\|T(V_e)-V_e\|_\infty<\mathrm{tolHJBvalue}$.
-
-### 4. Boundary state constraints in capital
-
-The code enforces state constraints at $k=0$ and $k=k_{\max}$ (implemented as the first and last grid nodes) in two places:
-
-- On controls (consumption clipping):
-  - At $k=0$: force $b_e(0)\ge 0$ by imposing $c_e(0)\le \mathrm{income}_e(0)$.
-  - At $k=k_{\max}$: force $b_e(k_{\max})\le 0$ by imposing $c_e(k_{\max})\ge \mathrm{income}_e(k_{\max})$.
-- On drift directly:
-  - $b_e[1]=\max\{b_e[1],0\}$, $b_e[N_k]=\min\{b_e[N_k],0\}$.
-
-This is consistent with no-outflow state constraints for both HJB and FP operators.
-
-### 5. Wage fixed point
-
-Inside each stationary HJB solve:
-
-1. Start from `w_start`.
-2. Solve HJB at current wage.
-3. Compute implied wage from aggregates and production function.
-4. Update with damping:
-   - $w\leftarrow (1-\omega_w)w+\omega_w\,w_{\mathrm{implied}}$.
-5. Stop when $|w_{\mathrm{implied}}-w|<\mathrm{tolWage}$.
-
-### 6. FP/KFE generator and time stepping
-
-Given current controls, FP uses:
+Il numero di passi è:
 
 ```math
-\dot{\phi}=G\phi.
+N = \lceil T/\Delta t\rceil.
 ```
 
-with:
-- Conservative upwind drift block per state.
-- Local epidemiological transition flows at each capital node.
-
-Time stepping is implicit Euler:
+Il passo effettivo usato dal codice è:
 
 ```math
-(I-\Delta t_{\mathrm{eff}}G^n)\phi^{n+1}=\phi^n.
+\Delta t_{eff}=T/N.
 ```
 
-After each step, numerical safety fixes are applied:
-- Project density to nonnegative values.
-- Renormalize total mass to 1.
+### Derivate Sicure
 
-### 7. Coupled algorithm implemented in `solveModel`
+Le derivate `∂k V` sono calcolate con differenze finite:
 
-The implemented loop is explicitly nested:
+- one-sided ai bordi;
+- central all'interno;
+- floor positivo `ϵDkUp`.
 
-1. FP time-marching loop (outermost): for $n=0,\dots,N_t-1$, given $\phi^n$.
-2. Stationary equilibrium update at time step $n$ (performed every `HJB_every` steps):
-   - Outer fixed point on wage $w$:
-     ```math
-     w^{m+1}=(1-\omega_w)w^m+\omega_w\,T_w(w^m;V,\phi^n),
-     ```
-     stopped when $|w^{m+1}-w^m|<\mathrm{tolWage}$.
-   - Inner fixed point on HJB for each wage iterate:
-     ```math
-     V^{j+1}=(1-\omega)V^j+\omega\,T_{\mathrm{HJB}}(V^j;w^m,\phi^n),
-     ```
-     stopped when $\|V^{j+1}-V^j\|_\infty<\mathrm{tolHJBvalue}$.
-3. With converged $(V^n,w^n)$, build controls and generator $G^n$.
-4. FP one-step time march (Backward Euler):
-   ```math
-   (I-\Delta t_{\mathrm{eff}}G^n)\phi^{n+1}=\phi^n.
-   ```
-5. Project to nonnegative mass, renormalize to total mass $1$, and save outputs.
+Questo evita divisioni per zero nelle FOC di consumo e lavoro.
 
-$\mathrm{HJB\_every}=1$ is fully coupled; larger values trade accuracy for speed.
+### Vincoli Di Stato Sul Capitale
 
-### 8. Diagnostics and plotting
+Il dominio del capitale è chiuso. Il codice impone vincoli di stato ai bordi:
 
-- `scripts/debug_hjb.jl` checks:
-  - HJB fixed-point residual.
-  - Linear-system residual $\|MV-\mathrm{rhs}\|_\infty$.
-  - Wage residual.
-- `scripts/debug_fp.jl` checks:
-  - Distribution mass preservation.
-  - Infected mass change.
-  - Final prices and aggregates.
-- `save_all_figures(result,p)` produces:
-  - Compartments over time.
-  - Density heatmaps/surfaces.
-  - Infection/vaccination flows.
-  - Control heatmaps/surfaces (`c`, `l`, `q`).
+- a `k=0`, il drift non può puntare fuori dal dominio verso sinistra;
+- a `k=MaxK`, il drift non può puntare fuori dal dominio verso destra.
+
+Operativamente:
+
+- si corregge il consumo ai bordi;
+- poi si tronca il drift:
+
+```math
+b(0)\ge 0,\qquad b(MaxK)\le 0.
+```
+
+### Operatori Sparse
+
+Sia nella HJB sia nella FP, gli operatori sono assemblati come matrici sparse.
+Il drift in capitale usa uno schema upwind di primo ordine.
+
+Nella HJB si risolve un sistema lineare implicito per le value functions.
+Nella FP si risolve un sistema lineare implicito per la densità.
+
+## Output Del Solver Dinamico
+
+`solveModelDynamic` restituisce un `NamedTuple` con:
+
+```text
+t
+    griglia temporale salvata
+
+F
+    sentiero delle distribuzioni
+
+V
+    sentiero delle value functions, con w, r, LI associati
+
+controls
+    consumi, lavoro, vaccino, drift, intensità di transizione
+
+prices
+    w, r, K, L, LI
+
+aggregates
+    K, L, LI
+
+diagnostics
+    err, errF, errV, errW, errR,
+    errori di massa, minimi di densità,
+    diagnostiche HJB e FP
+
+converged
+    booleano di convergenza
+
+iterations
+    numero di iterazioni Picard dinamiche
+
+method
+    :forward_backward_dynamic
+```
+
+## Figure
+
+La funzione:
+
+```julia
+EpiEconMFG.save_all_figures(result, p; outdir = "outputs/figures")
+```
+
+genera figure su:
+
+- masse aggregate `S`, `I`, `C`, `R` nel tempo;
+- distribuzioni `φ_e(t,k)`;
+- quote relative per stato;
+- flussi `S -> I` e `S -> R`;
+- consumi;
+- lavoro;
+- intensità vaccinale `q`;
+- wage effettivo dei suscettibili;
+- `R0` implicito;
+- distribuzione totale della ricchezza.
+
+Con:
+
+```julia
+with_surfaces = true
+```
+
+salva anche superfici 3D in PNG oltre alle heatmap/PDF.
+
+## Parametri Principali
+
+I parametri sono definiti in `src/core/parameters.jl` dentro `MFGEpiEcon`.
+
+Alcuni parametri numerici importanti:
+
+```text
+T_End
+    orizzonte temporale
+
+MaxK, Δk
+    dominio e passo del capitale
+
+Δt
+    passo temporale desiderato
+
+ξ
+    costo monetario esogeno del vaccino
+
+tolDynamic, maxIterDynamic
+    tolleranza e massimo numero di iterazioni del punto fisso dinamico
+
+ωF_dynamic, ωV_dynamic
+    damping sul sentiero della distribuzione e delle value functions
+
+maxIterHJBDynamic, tolHJBDynamic, ωHJBDynamic
+    controlli del punto fisso locale nella HJB dinamica
+
+tolHJBvalue, maxitHJBvalue, ω
+    controlli della HJB stazionaria
+
+tolWage, maxitWage, ωw
+    controlli del punto fisso sul wage nel quasi-stazionario
+```
+
+## Stato Corrente Del Codice
+
+Il problema dinamico completo è implementato e viene risolto da
+`solveModelDynamic`. Il metodo quasi-stazionario rimane nel codice perché è
+ancora utile per:
+
+- costruire il guess iniziale del solver dinamico;
+- confrontare la soluzione full dynamic con la soluzione non-forward-looking;
+- fare debug separato di HJB stazionaria e FP.
+
+La convenzione corrente è lavorare sul solver dinamico come oggetto principale e
+usare il quasi-stazionario solo come strumento ausiliario.

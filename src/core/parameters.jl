@@ -26,7 +26,7 @@
     dI::T = 0.1           # disutility of being Infected
     dC::T = 0.2           # disutility of being Contained
     γ::T = 10.0           # coefficient quadratic cost of propensity to vaccination
-    ξ::T = 0.1            # monetary cost per unit of vaccination intensity ξ(t,k); default constant
+    ξ::T = 0.001            # monetary cost per unit of vaccination intensity ξ(t,k); default constant
     qMax::T = 100.0       # cap on vaccination intensity for numerics (q >= 0, bounded above by qMax)
     θ::T = 0.75           # preference consumption vs leisure [0,1]
     ηS::T = 1.0           # productivity of Susceptible agents (benchmark)
@@ -43,7 +43,7 @@
     k::LinRange{T, Int64} = LinRange(0,MaxK,Nk) # capital grid
 
     # Temporal domain
-    T_End::T = 8.0            # End time (measured in years)
+    T_End::T = 2.0            # End time (measured in years)
     t_save::LinRange{T, Int64} = LinRange(0,T_End,1000)
 
     # numerical FP/KFE solver (distribution dynamics)

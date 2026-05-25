@@ -209,6 +209,7 @@ function solveModelDynamic(
 
     VT = copy_value(V_path_old[end])
 
+    err_hist = Float64[]
     errF_hist = Float64[]
     errV_hist = Float64[]
     errW_hist = Float64[]
@@ -271,11 +272,13 @@ function solveModelDynamic(
         errV = max_value_path_distance(V_path_new, V_before)
         errW = maximum(abs.(prices_new.w .- prices_old.w))
         errR = maximum(abs.(prices_new.r .- prices_old.r))
+        err = maximum((errF, errV, errW, errR))
         mass_error = path_mass_error(F_path_new, p)
         min_density = path_min_density(F_path_new)
         max_negative = minimum(fp_diag.max_negative_before_project)
         max_norm_correction = maximum(fp_diag.normalization_correction)
 
+        push!(err_hist, err)
         push!(errF_hist, errF)
         push!(errV_hist, errV)
         push!(errW_hist, errW)
@@ -291,11 +294,12 @@ function solveModelDynamic(
             println(
                 "dynamic Picard $it: errF=$(round(errF, sigdigits=4)) " *
                 "errV=$(round(errV, sigdigits=4)) errW=$(round(errW, sigdigits=4)) " *
-                "mass_err=$(round(mass_error, sigdigits=4)) minF=$(round(min_density, sigdigits=4))"
+                "err=$(round(err, sigdigits=4)) mass_err=$(round(mass_error, sigdigits=4)) " *
+                "minF=$(round(min_density, sigdigits=4))"
             )
         end
 
-        if errF < p.tolDynamic
+        if err < p.tolDynamic
             converged = true
             F_path_old = F_path_new
             V_path_old = V_path_new
@@ -334,6 +338,7 @@ function solveModelDynamic(
     ]
 
     diagnostics = (
+        err = err_hist,
         errF = errF_hist,
         errV = errV_hist,
         errW = errW_hist,
