@@ -11,6 +11,7 @@ using ProgressMeter
 export MFGEpiEcon,
     wage,
     returns,
+    vaccine_monetary_cost,
     create_test_distribution,
     solveModel,
     simulate_FP,

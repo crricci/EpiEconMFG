@@ -107,7 +107,7 @@ For `S`:
 
 where
 ```math
-b_S=(r_t-\delta)k + w_t\eta(S)l_S^*(t,k)-c_S^*(t,k).
+b_S=(r_t-\delta)k + w_t\eta(S)l_S^*(t,k)-c_S^*(t,k)-\xi(t,k)q^*(t,k).
 ```
 
 For `I`:
@@ -160,7 +160,9 @@ Utility in code is implemented as:
 u(c,l)=\theta\log(c)+(1-\theta)\log(1-l),
 ```
 
-with additional health disutility $d_I$, $d_C$, and vaccination cost $-\frac{\gamma}{2}q^2$.
+with additional health disutility $d_I$, $d_C$, vaccination utility cost
+$-\frac{\gamma}{2}q^2$, and monetary vaccination cost $\xi(t,k)q$ in the
+susceptible household budget.
 
 Representative objective (state-dependent controls and transitions):
 
@@ -179,7 +181,7 @@ HJB for `S`:
 ```math
 \rho V_S(k)=\max_{c\ge0,\,l\in[0,1],\,q\ge0}
 \left\{
-u(c,l)+V'_S(k)\big[(r-\delta)k+w l-c\big]
+u(c,l)+V'_S(k)\big[(r-\delta)k+w l-c-\xi(t,k)q\big]
 +q\big(V_R-V_S\big)
 +\beta l L_I \big(V_I-V_S\big)
 -\frac{\gamma}{2}q^2
@@ -261,7 +263,7 @@ W_S(k)=\eta_S w + \beta L_I\frac{V_I(k)-V_S(k)}{V'_S(k)}.
 Vaccination:
 
 ```math
-q^*(k)=\min\!\left\{q_{\max},\max\!\left\{0,\frac{V_R(k)-V_S(k)}{\gamma}\right\}\right\}.
+q^*(t,k)=\min\!\left\{q_{\max},\max\!\left\{0,\frac{V_R(t,k)-V_S(t,k)-\xi(t,k)V'_S(t,k)}{\gamma}\right\}\right\}.
 ```
 
 ## Numerical details

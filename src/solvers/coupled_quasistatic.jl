@@ -128,6 +128,7 @@ function solveModel(
     lastPol = nothing
     try
         for i in 1:Nstep_eff
+            ti = t_full[i]
             Ft = unstack_distribution(phi, p)
 
             do_solve = (i == 1) || ((i - 1) % HJB_every == 0)
@@ -158,7 +159,7 @@ function solveModel(
                         return nothing
                     end
                     emit(0, 0)
-                    Vsol = value_iterationHJB(Vguess, Ft, p; progress_cb = emit)
+                    Vsol = value_iterationHJB(Vguess, Ft, p; progress_cb = emit, t = ti)
 
                     # Only show residuals once we have the converged solution for this step.
                     last_errW = hasproperty(Vsol, :errW) ? Vsol.errW : NaN
@@ -166,7 +167,7 @@ function solveModel(
                     emit(hasproperty(Vsol, :itw) ? Vsol.itw : last_itw, hasproperty(Vsol, :itV) ? Vsol.itV : last_itV)
                     print("\n")
                 else
-                    Vsol = value_iterationHJB(Vguess, Ft, p)
+                    Vsol = value_iterationHJB(Vguess, Ft, p; t = ti)
                 end
                 Vguess = (VS = Vsol.VS, VI = Vsol.VI, VC = Vsol.VC, VR = Vsol.VR)
                 lastVsol = Vsol
@@ -174,7 +175,7 @@ function solveModel(
                 Vsol = lastVsol
             end
 
-            pol = compute_FP_policies((VS=Vsol.VS, VI=Vsol.VI, VC=Vsol.VC, VR=Vsol.VR), Ft, p; w=Vsol.w, deriv_cache=dcache)
+            pol = compute_FP_policies((VS=Vsol.VS, VI=Vsol.VI, VC=Vsol.VC, VR=Vsol.VR), Ft, p; w=Vsol.w, t=ti, deriv_cache=dcache)
             lastPol = pol
 
             # If HJB was reused, still print exactly one line for this time step.
@@ -221,8 +222,8 @@ function solveModel(
         # Final time: optionally store at t_end
         FtT = unstack_distribution(phi, p)
         if save_mask[end]
-            VsolT = value_iterationHJB(Vguess, FtT, p)
-            polT = compute_FP_policies((VS=VsolT.VS, VI=VsolT.VI, VC=VsolT.VC, VR=VsolT.VR), FtT, p; w=VsolT.w, deriv_cache=dcache)
+            VsolT = value_iterationHJB(Vguess, FtT, p; t = t_full[end])
+            polT = compute_FP_policies((VS=VsolT.VS, VI=VsolT.VI, VC=VsolT.VC, VR=VsolT.VR), FtT, p; w=VsolT.w, t=t_full[end], deriv_cache=dcache)
             t[save_ptr] = t_full[end]
             Fts[save_ptr] = FtT
             Vs[save_ptr] = VsolT

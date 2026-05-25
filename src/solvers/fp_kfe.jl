@@ -47,7 +47,7 @@ at the capital-grid boundaries.
 # Returns
 A `NamedTuple` containing consumption, labor, drifts, transition intensities, and aggregates.
 """
-function compute_FP_policies(V, Ft, p; w, deriv_cache=nothing)
+function compute_FP_policies(V, Ft, p; w, t=0.0, deriv_cache=nothing)
 
     # Derivatives V'(k) with safe floor (same as HJB)
     ∂V = isnothing(deriv_cache) ? compute_∂V_dk(V, p) : compute_∂V_dk!(deriv_cache, V, p)
@@ -68,24 +68,30 @@ function compute_FP_policies(V, Ft, p; w, deriv_cache=nothing)
     cC = p.θ ./ ∂V.∂kVC
     cR = p.θ ./ ∂V.∂kVR
 
-    # State constraints at the boundaries enforced on controls
     incomeS = capital_income .+ (p.ηS * w) .* lOpt.lS
     incomeI = capital_income .+ (p.ηI * w) .* lOpt.lI
     incomeC = capital_income
     incomeR = capital_income .+ (p.ηR * w) .* lOpt.lR
 
-    cS[1] = min(cS[1], max(incomeS[1], 0.0))
+    # Vaccination intensity S->R (same rule as HJB). The monetary cost enters the
+    # S budget drift and the q FOC as q = (VR - VS - ξ V'_S) / γ.
+    ξS = vaccine_monetary_cost.(t, p.k, Ref(p))
+    q_rate = clamp.((V.VR .- V.VS .- ξS .* ∂V.∂kVS) ./ p.γ, 0.0, p.qMax)
+    availableS = incomeS .- ξS .* q_rate
+
+    # State constraints at the boundaries enforced on controls
+    cS[1] = min(cS[1], max(availableS[1], 0.0))
     cI[1] = min(cI[1], max(incomeI[1], 0.0))
     cC[1] = min(cC[1], max(incomeC[1], 0.0))
     cR[1] = min(cR[1], max(incomeR[1], 0.0))
 
-    cS[end] = max(cS[end], max(incomeS[end], 0.0))
+    cS[end] = max(cS[end], max(availableS[end], 0.0))
     cI[end] = max(cI[end], max(incomeI[end], 0.0))
     cC[end] = max(cC[end], max(incomeC[end], 0.0))
     cR[end] = max(cR[end], max(incomeR[end], 0.0))
 
     # Drift b(k) = income - consumption
-    bS = incomeS .- cS
+    bS = availableS .- cS
     bI = incomeI .- cI
     bC = incomeC .- cC
     bR = incomeR .- cR
@@ -99,9 +105,6 @@ function compute_FP_policies(V, Ft, p; w, deriv_cache=nothing)
     # Mean-field infection intensity for S->I at each k
     infection_rate = p.β .* lOpt.lS .* LI
 
-    # Vaccination intensity S->R (same rule as HJB)
-    q_rate = clamp.((V.VR .- V.VS) ./ p.γ, 0.0, p.qMax)
-
     return (
         lOpt = lOpt,
         cS = cS,
@@ -114,6 +117,7 @@ function compute_FP_policies(V, Ft, p; w, deriv_cache=nothing)
         bR = bR,
         infection_rate = infection_rate,
         q_rate = q_rate,
+        ξS = ξS,
         K = K,
         L = L,
         w = w,
@@ -330,11 +334,11 @@ function simulate_FP(F0, V0, p; T_End=p.T_End, Δt=p.Δt, Nstep=nothing, HJB_eve
             Ft = unstack_distribution(phi, p)
 
             # Solve stationary HJB + wage fixed point given current distribution
-            Vsol = value_iterationHJB(Vguess, Ft, p)
+            Vsol = value_iterationHJB(Vguess, Ft, p; t=t[n])
             w = Vsol.w
 
             # Compute policies and build forward generator
-            pol = compute_FP_policies((VS=Vsol.VS, VI=Vsol.VI, VC=Vsol.VC, VR=Vsol.VR), Ft, p; w=w, deriv_cache=dcache)
+            pol = compute_FP_policies((VS=Vsol.VS, VI=Vsol.VI, VC=Vsol.VC, VR=Vsol.VR), Ft, p; w=w, t=t[n], deriv_cache=dcache)
             G = build_FP_generator(pol, p)
 
             # Build and factorize implicit Euler matrix once per batch

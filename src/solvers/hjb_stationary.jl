@@ -20,7 +20,7 @@ externality terms used when computing optimal controls.
 A `NamedTuple` `(VS, VI, VC, VR, itV, errV)` where `errV` is the final undamped
 value-iteration error at convergence.
 """
-function value_iterationHJB_given_wage(V0, Ft, p; w, progress_cb=nothing, progress_every::Int=getproperty(p, :progressHJB_every))
+function value_iterationHJB_given_wage(V0, Ft, p; w, t=0.0, progress_cb=nothing, progress_every::Int=getproperty(p, :progressHJB_every))
     # current iterate
     VS = copy(V0.VS)
     VI = copy(V0.VI)
@@ -43,7 +43,7 @@ function value_iterationHJB_given_wage(V0, Ft, p; w, progress_cb=nothing, progre
         end
 
         # HJB operator with fixed wage
-        Vnew, _ = T_HJB((VS = VS, VI = VI, VC = VC, VR = VR), Ft, p; w0 = w_fixed, deriv_cache = dcache, assembly_cache = acache)
+        Vnew, _ = T_HJB((VS = VS, VI = VI, VC = VC, VR = VR), Ft, p; w0 = w_fixed, t=t, deriv_cache = dcache, assembly_cache = acache)
 
         if !(all(isfinite, Vnew.VS) && all(isfinite, Vnew.VI) && all(isfinite, Vnew.VC) && all(isfinite, Vnew.VR))
             error("Non-finite values in HJB operator at iter=$it (w=$w_fixed).")
@@ -185,7 +185,7 @@ function value_iterationHJB(V0, Ft, p)
 	return value_iterationHJB(V0, Ft, p; progress_cb = nothing)
 end
 
-function value_iterationHJB(V0, Ft, p; progress_cb=nothing)
+function value_iterationHJB(V0, Ft, p; progress_cb=nothing, t=0.0)
     V = (VS = copy(V0.VS), VI = copy(V0.VI), VC = copy(V0.VC), VR = copy(V0.VR))
     w = p.w_start
     K = aggregate_kapital(Ft, p)
@@ -214,7 +214,7 @@ function value_iterationHJB(V0, Ft, p; progress_cb=nothing)
         # Important: do not pass itw through the HJB callback, otherwise the caller
         # sees wage iteration "updating" at the HJB frequency (making progressWage_every look ignored).
         inner_cb = progress_cb === nothing ? nothing : (itV -> progress_cb(0, itV))
-        V = value_iterationHJB_given_wage(V, Ft, p; w = w, progress_cb = inner_cb, progress_every = hjb_every)
+        V = value_iterationHJB_given_wage(V, Ft, p; w = w, t=t, progress_cb = inner_cb, progress_every = hjb_every)
         last_itV = hasproperty(V, :itV) ? V.itV : 0
         last_errV = hasproperty(V, :errV) ? V.errV : NaN
 
@@ -273,7 +273,7 @@ state-constraint boundary conditions via control adjustments at the grid endpoin
 A `NamedTuple` containing the sparse matrix `M`, the right-hand side `rhs`, and diagnostic
 objects such as the wage used inside the operator and the implied wage update.
 """
-function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cache=nothing)
+function build_HJB_linear_system(V, Ft, p; w0, t=0.0, deriv_cache=nothing, assembly_cache=nothing)
 
     # Unpack value functions
     VS = V.VS; VI = V.VI; VC = V.VC; VR = V.VR;
@@ -318,23 +318,10 @@ function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cac
     cC = p.θ ./ ∂VC_k
     cR = p.θ ./ ∂VR_k
 
-    # State-constraints at the boundaries must be enforced on controls (not just by clipping drift).
-    # At k = 0, require b >= 0  =>  c <= income.
-    # At k = kmax, require b <= 0  =>  c >= income.
     incomeS = capital_income .+ (p.ηS * w) .* lOpt.lS
     incomeI = capital_income .+ (p.ηI * w) .* lOpt.lI
     incomeC = capital_income
     incomeR = capital_income .+ (p.ηR * w) .* lOpt.lR
-
-    cS[1] = min(cS[1], max(incomeS[1], 0.0))
-    cI[1] = min(cI[1], max(incomeI[1], 0.0))
-    cC[1] = min(cC[1], max(incomeC[1], 0.0))
-    cR[1] = min(cR[1], max(incomeR[1], 0.0))
-
-    cS[end] = max(cS[end], max(incomeS[end], 0.0))
-    cI[end] = max(cI[end], max(incomeI[end], 0.0))
-    cC[end] = max(cC[end], max(incomeC[end], 0.0))
-    cR[end] = max(cR[end], max(incomeR[end], 0.0))
 
     Nk = p.Nk
     Δk = p.Δk
@@ -342,8 +329,24 @@ function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cac
     # Rates (k-dependent)
     infection_rate = p.β .* lOpt.lS .* LI
 
-    v_rate = clamp.((VR .- VS) ./ p.γ, 0.0, p.qMax)
+    ξS = vaccine_monetary_cost.(t, p.k, Ref(p))
+    v_rate = clamp.((VR .- VS .- ξS .* ∂VS_k) ./ p.γ, 0.0, p.qMax)
     v_cost = -0.5 .* p.γ .* (v_rate .^ 2)
+
+    # State-constraints at the boundaries must be enforced on controls (not just by clipping drift).
+    # At k = 0, require b >= 0  =>  c <= income net of vaccination spending.
+    # At k = kmax, require b <= 0  =>  c >= income net of vaccination spending.
+    availableS = incomeS .- ξS .* v_rate
+
+    cS[1] = min(cS[1], max(availableS[1], 0.0))
+    cI[1] = min(cI[1], max(incomeI[1], 0.0))
+    cC[1] = min(cC[1], max(incomeC[1], 0.0))
+    cR[1] = min(cR[1], max(incomeR[1], 0.0))
+
+    cS[end] = max(cS[end], max(availableS[end], 0.0))
+    cI[end] = max(cI[end], max(incomeI[end], 0.0))
+    cC[end] = max(cC[end], max(incomeC[end], 0.0))
+    cR[end] = max(cR[end], max(incomeR[end], 0.0))
 
     # Flow utilities u(k): compute from original utility using continuous controls
     epsu = p.ϵDkUp
@@ -353,7 +356,7 @@ function build_HJB_linear_system(V, Ft, p; w0, deriv_cache=nothing, assembly_cac
     uR = p.θ .* log.(max.(cR, epsu)) .+ (1 - p.θ) .* log.(max.(1 .- lOpt.lR, epsu))
 
     # Drifts b(k) = capital income + labor income - consumption
-    bS = incomeS .- cS
+    bS = availableS .- cS
     bI = incomeI .- cI
     bC = incomeC .- cC
     bR = incomeR .- cR
@@ -463,9 +466,9 @@ HJB operator for fixed-point / value-iteration.
 Builds and solves the implicit linear system for the value functions, returning the new
 value functions and the implied wage update.
 """
-function T_HJB(V, Ft, p; w0, deriv_cache=nothing, assembly_cache=nothing)
+function T_HJB(V, Ft, p; w0, t=0.0, deriv_cache=nothing, assembly_cache=nothing)
 
-    sys = build_HJB_linear_system(V, Ft, p; w0=w0, deriv_cache=deriv_cache, assembly_cache=assembly_cache)
+    sys = build_HJB_linear_system(V, Ft, p; w0=w0, t=t, deriv_cache=deriv_cache, assembly_cache=assembly_cache)
 
     Nk = sys.Nk
     Vvec = sys.M \ sys.rhs
@@ -480,5 +483,4 @@ function T_HJB(V, Ft, p; w0, deriv_cache=nothing, assembly_cache=nothing)
 
     return (VS = VS_new, VI = VI_new, VC = VC_new, VR = VR_new), sys.w_update
 end
-
 

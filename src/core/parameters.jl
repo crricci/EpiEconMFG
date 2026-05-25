@@ -26,6 +26,7 @@
     dI::T = 0.1           # disutility of being Infected
     dC::T = 0.2           # disutility of being Contained
     γ::T = 10.0           # coefficient quadratic cost of propensity to vaccination
+    ξ::T = 0.1            # monetary cost per unit of vaccination intensity ξ(t,k); default constant
     qMax::T = 100.0       # cap on vaccination intensity for numerics (q >= 0, bounded above by qMax)
     θ::T = 0.75           # preference consumption vs leisure [0,1]
     ηS::T = 1.0           # productivity of Susceptible agents (benchmark)
@@ -94,6 +95,18 @@ Inputs can be scalars or arrays; `L` is floored at `p.ϵDkUp` for numerical safe
 function returns(K, L, p)
     Ls = max(L, p.ϵDkUp)
     return p.α * p.A * K.^(p.α-1) .* Ls.^(1-p.α)
+end
+
+"""
+    vaccine_monetary_cost(t, k, p)
+
+Exogenous monetary cost `ξ(t,k)` per unit of vaccination intensity.
+
+The current calibration is constant and controlled by `p.ξ`; the function form keeps
+the call sites ready for a time- and capital-dependent schedule.
+"""
+function vaccine_monetary_cost(t, k, p)
+    return p.ξ
 end
 
 """
