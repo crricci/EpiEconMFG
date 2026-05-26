@@ -67,11 +67,11 @@
     maxitWage::Int = 500        # maximum iterations for wage fixed point
 
     # dynamic forward-backward solver
-    maxIterDynamic::Int = 100
+    maxIterDynamic::Int = 10000
     tolDynamic::T = 1e-6
     ωF_dynamic::T = 0.05
     ωV_dynamic::T = 0.25
-    maxIterHJBDynamic::Int = 30
+    maxIterHJBDynamic::Int = 100
     tolHJBDynamic::T = 1e-7
     ωHJBDynamic::T = 0.5
     dynamicInitialGuess::Symbol = :quasistatic
@@ -86,6 +86,7 @@
     # plotting
     truncateKPlots::Bool = true    # plot k-dependent figures only up to an initial-mass quantile
     plotKMassLevel::T = 0.9        # initial population mass shown on k-dependent figures
+    plotVaccinationLogScale::Bool = true # plot vaccination intensity as log10(1+q)
     
     # general
     verbose::Bool = false

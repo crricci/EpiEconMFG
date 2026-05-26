@@ -87,6 +87,13 @@ function _restrict_k(k, k_indices, mats...)
 	return tuple(out...)
 end
 
+function _plot_vaccination_matrix(Q, p)
+	if p.plotVaccinationLogScale
+		return log10.(1 .+ max.(Q, 0.0)), "log10(1+q)", "Vaccination intensity log10(1+q)"
+	end
+	return Q, "q", "Vaccination intensity q(t,k)"
+end
+
 function _global_minmax(mats...)
 	lo = Inf
 	hi = -Inf
@@ -827,12 +834,13 @@ function save_figure_6_vaccination_q(result, p;
 	Q = _time_by_k_matrix(n -> result.controls[n].q_rate, Nt, Nk)
 	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
 	k, Q = _restrict_k(k, kidx, Q)
-	q_hi = maximum(Q)
+	Qplot, q_label, q_title = _plot_vaccination_matrix(Q, p)
+	q_hi = maximum(Qplot)
 	clims_q = _safe_colorrange(0.0, q_hi)
 
 	fig = CairoMakie.Figure(size = (1100, 650))
-	ax = CairoMakie.Axis(fig[1, 1], title = "Vaccination intensity q(t,k)", xlabel = "t", ylabel = "k")
-	hm = _heatmap_with_contours!(ax, t, k, Q; colormap = :magma, colorrange = clims_q, contour_lines = contour_lines)
+	ax = CairoMakie.Axis(fig[1, 1], title = q_title, xlabel = "t", ylabel = "k")
+	hm = _heatmap_with_contours!(ax, t, k, Qplot; colormap = :magma, colorrange = clims_q, contour_lines = contour_lines)
 	CairoMakie.Colorbar(fig[1, 2], hm)
 	CairoMakie.save(joinpath(outdir, filename), fig)
 	return nothing
@@ -864,12 +872,13 @@ function save_figure_6bis_vaccination_q_surface(result, p;
 	Q = _time_by_k_matrix(n -> result.controls[n].q_rate, Nt, Nk)
 	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
 	k, Q = _restrict_k(k, kidx, Q)
-	q_hi = maximum(Q)
+	Qplot, q_label, q_title = _plot_vaccination_matrix(Q, p)
+	q_hi = maximum(Qplot)
 	clims_q = _safe_colorrange(0.0, q_hi)
 
 	fig = CairoMakie.Figure(size = (1050, 650))
-	ax = CairoMakie.Axis3(fig[1, 1], title = "Vaccination intensity q(t,k)", xlabel = "t", ylabel = "k", zlabel = "q")
-	plt = _surface_plot!(ax, t, k, Q; colormap = :magma, colorrange = clims_q, maxNt = maxNt, maxNk = maxNk, rasterize = rasterize)
+	ax = CairoMakie.Axis3(fig[1, 1], title = q_title, xlabel = "t", ylabel = "k", zlabel = q_label)
+	plt = _surface_plot!(ax, t, k, Qplot; colormap = :magma, colorrange = clims_q, maxNt = maxNt, maxNk = maxNk, rasterize = rasterize)
 	CairoMakie.Colorbar(fig[1, 2], plt)
 	outpath = joinpath(outdir, filename)
 	if endswith(lowercase(filename), ".jpg") || endswith(lowercase(filename), ".jpeg")

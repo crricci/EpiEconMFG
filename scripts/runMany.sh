@@ -25,12 +25,24 @@ run_dynamic_case() {
 }
 
 # Quasi-static HJB runs.
-run_quasistatic "quasi-static-HJB_BASELINE" ""
-run_quasistatic "quasi-static-HJB_xi0.002" "ξ = 0.002"
-run_quasistatic "quasi-static-HJB_gamma5" "γ = 5.0"
-run_quasistatic "quasi-static-HJB_dIdC0204" "dI = 0.2, dC = 0.4"
+# run_quasistatic "quasi-static-HJB_BASELINE" ""
+# run_quasistatic "quasi-static-HJB_dIdC12" "dI = 1.0, dC = 2.0"
+# run_quasistatic "quasi-static-HJB_dIdC1020" "dI = 10.0, dC = 20.0"
+# run_quasistatic "quasi-static-HJB_dIdC12xi001" "dI = 1.0, dC = 2.0, ξ = 0.01"
+# run_quasistatic "quasi-static-HJB_dIdC1020xi001" "dI = 10.0, dC = 20.0, ξ = 0.01"
+# run_quasistatic "quasi-static-HJB_dIdC12xi01" "dI = 1.0, dC = 2.0, ξ = 0.1"
+# run_quasistatic "quasi-static-HJB_dIdC1020xi01" "dI = 10.0, dC = 20.0, ξ = 0.1"
 
 # Example dynamic runs. Uncomment if you want to launch them too.
+run_dynamic_case "dynamic_dIdC12" "dI = 1.0, dC = 2.0"
+run_dynamic_case "dynamic_dIdC1020" "dI = 10.0, dC = 20.0"
+run_dynamic_case "dynamic_dIdC12xi001" "dI = 1.0, dC = 2.0, ξ = 0.01"
+run_dynamic_case "dynamic_dIdC1020xi001" "dI = 10.0, dC = 20.0, ξ = 0.01"
+run_dynamic_case "dynamic_dIdC12xi01" "dI = 1.0, dC = 2.0, ξ = 0.1"
+run_dynamic_case "dynamic_dIdC12xi1" "dI = 1.0, dC = 2.0, ξ = 1.0"
+run_dynamic_case "dynamic_dIdC1020xi01" "dI = 10.0, dC = 20.0, ξ = 0.1"
+run_dynamic_case "dynamic_dIdC1020xi1" "dI = 10.0, dC = 20.0, ξ = 1.0"
+
 # run_dynamic_case "dynamic_T2_xi0001" "T_End = 2.0, ξ = 0.001"
 # run_dynamic_case "dynamic_T3_xi0001" "T_End = 3.0, ξ = 0.001"
 
