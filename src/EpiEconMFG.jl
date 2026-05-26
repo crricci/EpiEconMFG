@@ -41,7 +41,9 @@ export MFGEpiEcon,
     T_wage,
     solve_hjb_backward,
     solveModelDynamic,
-    save_all_figures
+    save_all_figures,
+    save_solution_csv,
+    load_solution_csv
 
 include("core/parameters.jl")
 include("core/diff.jl")

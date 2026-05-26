@@ -9,26 +9,26 @@
     # - I exits at rate (σ1 + σ3 + μ): I->C with prob σ1/(σ1+σ3+μ), I->R with prob σ3/(...).
     # - C exits at rate (αEpi + σ2 + μ): C->S at rate (αEpi+μ) (interpretable as death+replacement), C->R at σ2.
     # - R -> S at rate (λ + μ).
-    β::T = 200.0        # transmission parameter (≈ R0*(σ1+σ3) with R0≈3 and mean infectious duration ≈5 days)
+    β::T = 200.0        # transmission parameter
     μ::T = 1/70         # background turnover (set ~0 on COVID timescales)
-    σ1::T = 365/7       # I → C (mean time ~5 days, with ~60% going to C)
-    σ2::T = 365/7       # C → R (mean time in C ~10 days)
-    σ3::T = 365/14          # I → R (mean time ~5 days, with ~40% going directly to R)
-    λ::T = 0.75         # waning immunity R → S (mean ~3 years)
+    σ1::T = 365/7       # I → C
+    σ2::T = 365/7       # C → R
+    σ3::T = 365/14      # I → R
+    λ::T = 0.75         # waning immunity R → S
     αEpi::T = 10/70     # additional C → S hazard (tuned so death-probability while in C is small)
 
 
     # ECON PARAMETERS
     ρ::T = 0.05           # discount rate
     δ::T = 0.05           # capital depreciation rate
-    α::T = 0.6            # Production function 
+    α::T = 0.35           # Production function
     A::T = 1.0            # Total factor productivity
     dI::T = 0.1           # disutility of being Infected
     dC::T = 0.2           # disutility of being Contained
     γ::T = 10.0           # coefficient quadratic cost of propensity to vaccination
-    ξ::T = 0.001            # monetary cost per unit of vaccination intensity ξ(t,k); default constant
+    ξ::T = 0.001          # monetary cost per unit of vaccination intensity ξ(t,k); default constant
     qMax::T = 100.0       # cap on vaccination intensity for numerics (q >= 0, bounded above by qMax)
-    θ::T = 0.75           # preference consumption vs leisure [0,1]
+    θ::T = 0.9            # preference consumption vs leisure [0,1]
     ηS::T = 1.0           # productivity of Susceptible agents (benchmark)
     ηI::T = 0.7           # reduced productivity of Infected agents (<1)
     ηC::T = 0.0           # productivity of Contained agents (do not produce)
@@ -37,13 +37,16 @@
     # NUMERICAL
     # Capital domain
     mK::T = 9.0               # mode of the (initial) capital distribution over k (must be > 0)
+    σK::T = 0.6               # lognormal dispersion of the initial capital distribution
+    N::T = 1e4                # reference population size used to convert initial counts into shares
+    I0::T = 1.0               # initial number of infected agents; initial infected share is I0 / N
     MaxK::T = 100.0             # maximum capital level
     Δk::T = 1e-0                # capital step size
     Nk::Int = Int(MaxK/Δk)+1    # number of capital grid points
     k::LinRange{T, Int64} = LinRange(0,MaxK,Nk) # capital grid
 
     # Temporal domain
-    T_End::T = 2.0            # End time (measured in years)
+    T_End::T = 4.0            # End time (measured in years)
     t_save::LinRange{T, Int64} = LinRange(0,T_End,1000)
 
     # numerical FP/KFE solver (distribution dynamics)
@@ -79,6 +82,10 @@
     # progress (when verbose=false but you still want to monitor iteration counters)
     progressWage_every::Int = 5   # show wage iteration counter every this many wage FP iterations
     progressHJB_every::Int = 20   # show HJB value-iteration counter every this many HJB iterations
+
+    # plotting
+    truncateKPlots::Bool = true    # plot k-dependent figures only up to an initial-mass quantile
+    plotKMassLevel::T = 0.9        # initial population mass shown on k-dependent figures
     
     # general
     verbose::Bool = false
@@ -135,20 +142,32 @@ vector, normalized so that total mass integrates to 1 on the capital grid.
 function create_test_distribution(p)
     # Early-epidemic initial condition (shares; total mass integrates to 1).
     # Keep C and R near zero and start with a small prevalence of I.
-    i0 = 1e-4
+    if !(p.N > 0)
+        throw(ArgumentError("p.N must be > 0 (got $(p.N))"))
+    end
+    if !(p.I0 >= 0)
+        throw(ArgumentError("p.I0 must be >= 0 (got $(p.I0))"))
+    end
+
+    i0 = p.I0 / p.N
     c0 = 0.0
     r0 = 0.0
     s0 = 1.0 - i0 - c0 - r0
+    if !(s0 >= 0)
+        throw(ArgumentError("Initial susceptible share is negative: I0/N=$(i0). Require I0 <= N."))
+    end
 
     if !(p.mK > 0)
         throw(ArgumentError("p.mK must be > 0 (got $(p.mK))"))
     end
+    if !(p.σK > 0)
+        throw(ArgumentError("p.σK must be > 0 (got $(p.σK))"))
+    end
 
     # Lognormal density over capital with mode p.mK.
     # For X ~ LogNormal(μ, σ), mode = exp(μ - σ^2) => μ = log(mode) + σ^2.
-    σK = 0.6
-    μK = log(p.mK) + σK^2
-    invσ = inv(σK)
+    μK = log(p.mK) + p.σK^2
+    invσ = inv(p.σK)
     invsqrt2π = inv(sqrt(2 * π))
 
     base = similar(collect(p.k))

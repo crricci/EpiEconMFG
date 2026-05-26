@@ -45,6 +45,48 @@ function _time_by_k_matrix(get_vec, Nt::Int, Nk::Int)
 	return Z
 end
 
+function _plot_k_indices(result, p;
+	truncate_k_to_initial_mass::Bool = true,
+	k_mass_level::Real = 0.9,
+)
+	if !truncate_k_to_initial_mass
+		return collect(1:p.Nk)
+	end
+	if !(0 < k_mass_level <= 1)
+		error("k_mass_level must be in (0, 1], got $k_mass_level")
+	end
+	if !haskey(result, :F) || isempty(result.F)
+		error("Cannot compute k plotting range: result.F is missing or empty")
+	end
+
+	F0 = result.F[1]
+	mass_density0 = F0.ϕSt .+ F0.ϕIt .+ F0.ϕCt .+ F0.ϕRt
+	total_mass0 = sum(mass_density0) * p.Δk
+	if !(isfinite(total_mass0) && total_mass0 > 0)
+		error("Cannot compute k plotting range: non-positive initial mass $total_mass0")
+	end
+
+	cumulative = 0.0
+	last_idx = p.Nk
+	@inbounds for i in 1:p.Nk
+		cumulative += mass_density0[i] * p.Δk
+		if cumulative / total_mass0 >= k_mass_level
+			last_idx = i
+			break
+		end
+	end
+
+	return collect(1:max(1, last_idx))
+end
+
+function _restrict_k(k, k_indices, mats...)
+	out = Any[k[k_indices]]
+	for M in mats
+		push!(out, M[:, k_indices])
+	end
+	return tuple(out...)
+end
+
 function _global_minmax(mats...)
 	lo = Inf
 	hi = -Inf
@@ -243,6 +285,7 @@ function save_figure_2_distributions(result, p;
 	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_2_heatmaps_distributions_SICR_tk.pdf",
 	contour_lines::Int = 6,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -261,6 +304,8 @@ function save_figure_2_distributions(result, p;
 	ΦI = _time_by_k_matrix(n -> result.F[n].ϕIt, Nt, Nk)
 	ΦC = _time_by_k_matrix(n -> result.F[n].ϕCt, Nt, Nk)
 	ΦR = _time_by_k_matrix(n -> result.F[n].ϕRt, Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, ΦS, ΦI, ΦC, ΦR = _restrict_k(k, kidx, ΦS, ΦI, ΦC, ΦR)
 
 	ϕ_hi = maximum((maximum(ΦS), maximum(ΦI), maximum(ΦC), maximum(ΦR)))
 	clims_ϕ = _safe_colorrange(0.0, ϕ_hi)
@@ -288,6 +333,7 @@ function save_figure_2Rel_relative_shares(result, p;
 	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_2Rel_heatmaps_relative_shares_SICR_tk.pdf",
 	contour_lines::Int = 6,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -306,6 +352,8 @@ function save_figure_2Rel_relative_shares(result, p;
 	ΦI = _time_by_k_matrix(n -> result.F[n].ϕIt, Nt, Nk)
 	ΦC = _time_by_k_matrix(n -> result.F[n].ϕCt, Nt, Nk)
 	ΦR = _time_by_k_matrix(n -> result.F[n].ϕRt, Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, ΦS, ΦI, ΦC, ΦR = _restrict_k(k, kidx, ΦS, ΦI, ΦC, ΦR)
 
 	den = ΦS .+ ΦI .+ ΦC .+ ΦR
 	RS = similar(den, Float64)
@@ -357,6 +405,7 @@ function save_figure_2bis_distributions_surface(result, p;
 	rasterize = 1,
 	px_per_unit::Real = 1.35,
 	jpg_quality::Int = 92,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -375,6 +424,8 @@ function save_figure_2bis_distributions_surface(result, p;
 	ΦI = _time_by_k_matrix(n -> result.F[n].ϕIt, Nt, Nk)
 	ΦC = _time_by_k_matrix(n -> result.F[n].ϕCt, Nt, Nk)
 	ΦR = _time_by_k_matrix(n -> result.F[n].ϕRt, Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, ΦS, ΦI, ΦC, ΦR = _restrict_k(k, kidx, ΦS, ΦI, ΦC, ΦR)
 
 	ϕ_hi = maximum((maximum(ΦS), maximum(ΦI), maximum(ΦC), maximum(ΦR)))
 	clims_ϕ = _safe_colorrange(0.0, ϕ_hi)
@@ -411,6 +462,7 @@ function save_figure_2Relbis_relative_shares_surface(result, p;
 	rasterize = 1,
 	px_per_unit::Real = 1.35,
 	jpg_quality::Int = 92,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -429,6 +481,8 @@ function save_figure_2Relbis_relative_shares_surface(result, p;
 	ΦI = _time_by_k_matrix(n -> result.F[n].ϕIt, Nt, Nk)
 	ΦC = _time_by_k_matrix(n -> result.F[n].ϕCt, Nt, Nk)
 	ΦR = _time_by_k_matrix(n -> result.F[n].ϕRt, Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, ΦS, ΦI, ΦC, ΦR = _restrict_k(k, kidx, ΦS, ΦI, ΦC, ΦR)
 
 	den = ΦS .+ ΦI .+ ΦC .+ ΦR
 	RS = similar(den, Float64)
@@ -481,6 +535,7 @@ function save_figure_3_flux_S_to_I(result, p;
 	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_3_heatmap_flux_S_to_I_tk.pdf",
 	contour_lines::Int = 6,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -496,6 +551,8 @@ function save_figure_3_flux_S_to_I(result, p;
 	end
 
 	FluxSI = _time_by_k_matrix(n -> (result.controls[n].infection_rate .* result.F[n].ϕSt), Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, FluxSI = _restrict_k(k, kidx, FluxSI)
 	flux_hi = maximum(FluxSI)
 	clims_flux = _safe_colorrange(0.0, flux_hi)
 
@@ -515,6 +572,7 @@ function save_figure_3bis_flux_S_to_I_surface(result, p;
 	rasterize = 1,
 	px_per_unit::Real = 1.35,
 	jpg_quality::Int = 92,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -530,6 +588,8 @@ function save_figure_3bis_flux_S_to_I_surface(result, p;
 	end
 
 	FluxSI = _time_by_k_matrix(n -> (result.controls[n].infection_rate .* result.F[n].ϕSt), Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, FluxSI = _restrict_k(k, kidx, FluxSI)
 	flux_hi = maximum(FluxSI)
 	clims_flux = _safe_colorrange(0.0, flux_hi)
 
@@ -550,6 +610,7 @@ function save_figure_4_consumption(result, p;
 	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_4_heatmaps_consumption_SICR_tk.pdf",
 	contour_lines::Int = 6,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -568,6 +629,8 @@ function save_figure_4_consumption(result, p;
 	CI = _time_by_k_matrix(n -> result.controls[n].cI, Nt, Nk)
 	CC = _time_by_k_matrix(n -> result.controls[n].cC, Nt, Nk)
 	CR = _time_by_k_matrix(n -> result.controls[n].cR, Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, CS, CI, CC, CR = _restrict_k(k, kidx, CS, CI, CC, CR)
 
 	c_lo, c_hi = _global_minmax(CS, CI, CC, CR)
 	clims_c = _safe_colorrange(c_lo, c_hi)
@@ -599,6 +662,7 @@ function save_figure_4bis_consumption_surface(result, p;
 	rasterize = 1,
 	px_per_unit::Real = 1.35,
 	jpg_quality::Int = 92,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -617,6 +681,8 @@ function save_figure_4bis_consumption_surface(result, p;
 	CI = _time_by_k_matrix(n -> result.controls[n].cI, Nt, Nk)
 	CC = _time_by_k_matrix(n -> result.controls[n].cC, Nt, Nk)
 	CR = _time_by_k_matrix(n -> result.controls[n].cR, Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, CS, CI, CC, CR = _restrict_k(k, kidx, CS, CI, CC, CR)
 	c_lo, c_hi = _global_minmax(CS, CI, CC, CR)
 	clims_c = _safe_colorrange(c_lo, c_hi)
 
@@ -648,6 +714,7 @@ function save_figure_5_labor(result, p;
 	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_5_heatmaps_labor_SIR_tk.pdf",
 	contour_lines::Int = 6,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -665,6 +732,8 @@ function save_figure_5_labor(result, p;
 	LS = _time_by_k_matrix(n -> result.controls[n].lOpt.lS, Nt, Nk)
 	LI = _time_by_k_matrix(n -> result.controls[n].lOpt.lI, Nt, Nk)
 	LR = _time_by_k_matrix(n -> result.controls[n].lOpt.lR, Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, LS, LI, LR = _restrict_k(k, kidx, LS, LI, LR)
 	clims_l = (0.0, 1.0)
 
 	fig = CairoMakie.Figure(size = (1400, 500))
@@ -692,6 +761,7 @@ function save_figure_5bis_labor_surface(result, p;
 	rasterize = 1,
 	px_per_unit::Real = 1.35,
 	jpg_quality::Int = 92,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -709,6 +779,8 @@ function save_figure_5bis_labor_surface(result, p;
 	LS = _time_by_k_matrix(n -> result.controls[n].lOpt.lS, Nt, Nk)
 	LI = _time_by_k_matrix(n -> result.controls[n].lOpt.lI, Nt, Nk)
 	LR = _time_by_k_matrix(n -> result.controls[n].lOpt.lR, Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, LS, LI, LR = _restrict_k(k, kidx, LS, LI, LR)
 	clims_l = (0.0, 1.0)
 
 	fig = CairoMakie.Figure(size = (1200, 550))
@@ -737,6 +809,7 @@ function save_figure_6_vaccination_q(result, p;
 	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_6_heatmap_q_tk.pdf",
 	contour_lines::Int = 6,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -752,6 +825,8 @@ function save_figure_6_vaccination_q(result, p;
 	end
 
 	Q = _time_by_k_matrix(n -> result.controls[n].q_rate, Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, Q = _restrict_k(k, kidx, Q)
 	q_hi = maximum(Q)
 	clims_q = _safe_colorrange(0.0, q_hi)
 
@@ -771,6 +846,7 @@ function save_figure_6bis_vaccination_q_surface(result, p;
 	rasterize = 1,
 	px_per_unit::Real = 1.35,
 	jpg_quality::Int = 92,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -786,6 +862,8 @@ function save_figure_6bis_vaccination_q_surface(result, p;
 	end
 
 	Q = _time_by_k_matrix(n -> result.controls[n].q_rate, Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, Q = _restrict_k(k, kidx, Q)
 	q_hi = maximum(Q)
 	clims_q = _safe_colorrange(0.0, q_hi)
 
@@ -806,6 +884,7 @@ function save_figure_7_vaccination_flow_S_to_R(result, p;
 	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_7_heatmap_flow_S_to_R_vaccination_tk.pdf",
 	contour_lines::Int = 6,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -821,6 +900,8 @@ function save_figure_7_vaccination_flow_S_to_R(result, p;
 	end
 
 	FlowSR_vax = _time_by_k_matrix(n -> (result.controls[n].q_rate .* result.F[n].ϕSt), Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, FlowSR_vax = _restrict_k(k, kidx, FlowSR_vax)
 	flow_hi = maximum(FlowSR_vax)
 	clims_flow = _safe_colorrange(0.0, flow_hi)
 
@@ -840,6 +921,7 @@ function save_figure_7bis_vaccination_flow_S_to_R_surface(result, p;
 	rasterize = 1,
 	px_per_unit::Real = 1.35,
 	jpg_quality::Int = 92,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -855,6 +937,8 @@ function save_figure_7bis_vaccination_flow_S_to_R_surface(result, p;
 	end
 
 	FlowSR_vax = _time_by_k_matrix(n -> (result.controls[n].q_rate .* result.F[n].ϕSt), Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, FlowSR_vax = _restrict_k(k, kidx, FlowSR_vax)
 	flow_hi = maximum(FlowSR_vax)
 	clims_flow = _safe_colorrange(0.0, flow_hi)
 
@@ -875,6 +959,7 @@ function save_figure_8_effective_wage_S(result, p;
 	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_8_heatmap_effective_wage_WS_tk.pdf",
 	contour_lines::Int = 6,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -899,6 +984,8 @@ function save_figure_8_effective_wage_S(result, p;
 		agg = compute_labor_and_aggregates(Vt, ∂V, Ft, p; w = Vn.w)
 		WS[n, :] .= agg.W.WS
 	end
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, WS = _restrict_k(k, kidx, WS)
 
 	ws_lo, ws_hi = _finite_minmax(WS)
 	clims_ws = _safe_colorrange(ws_lo, ws_hi)
@@ -919,6 +1006,7 @@ function save_figure_8bis_effective_wage_S_surface(result, p;
 	rasterize = 1,
 	px_per_unit::Real = 1.35,
 	jpg_quality::Int = 92,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -943,6 +1031,8 @@ function save_figure_8bis_effective_wage_S_surface(result, p;
 		agg = compute_labor_and_aggregates(Vt, ∂V, Ft, p; w = Vn.w)
 		WS[n, :] .= agg.W.WS
 	end
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, WS = _restrict_k(k, kidx, WS)
 
 	ws_lo, ws_hi = _finite_minmax(WS)
 	clims_ws = _safe_colorrange(ws_lo, ws_hi)
@@ -1013,6 +1103,7 @@ function save_figure_10_wealth_distribution_total(result, p;
 	outdir::AbstractString = "outputs/figures",
 	filename::AbstractString = "figure_10_heatmap_wealth_distribution_total_tk.pdf",
 	contour_lines::Int = 6,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -1032,6 +1123,8 @@ function save_figure_10_wealth_distribution_total(result, p;
 		Ft = result.F[n]
 		Φ[n, :] .= Ft.ϕSt .+ Ft.ϕIt .+ Ft.ϕCt .+ Ft.ϕRt
 	end
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, Φ = _restrict_k(k, kidx, Φ)
 
 	ϕ_lo, ϕ_hi = _finite_minmax(Φ)
 	clims_ϕ = _safe_colorrange(ϕ_lo, ϕ_hi)
@@ -1052,6 +1145,7 @@ function save_figure_10bis_wealth_distribution_total_surface(result, p;
 	rasterize = 1,
 	px_per_unit::Real = 1.35,
 	jpg_quality::Int = 92,
+	k_indices = nothing,
 )
 	mkpath(outdir)
 
@@ -1071,6 +1165,8 @@ function save_figure_10bis_wealth_distribution_total_surface(result, p;
 		Ft = result.F[n]
 		Φ[n, :] .= Ft.ϕSt .+ Ft.ϕIt .+ Ft.ϕCt .+ Ft.ϕRt
 	end
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, Φ = _restrict_k(k, kidx, Φ)
 
 	ϕ_lo, ϕ_hi = _finite_minmax(Φ)
 	clims_ϕ = _safe_colorrange(ϕ_lo, ϕ_hi)
@@ -1101,14 +1197,26 @@ Each figure is produced by a separate `save_figure_*` function.
 Output filenames use the `figure_#_...` prefix (e.g. `figure_1_...`).
 Heatmaps are grouped into multi-panel figures (2×2 or 1×3) and include a few
 contour lines overlaid to improve readability.
+
+By default, figures with a capital-grid axis are shown only up to the smallest
+capital level containing `p.plotKMassLevel` of the initial population mass.
+Set `truncate_k_to_initial_mass=false` to plot the full capital grid.
 """
 function save_all_figures(result, p;
 	outdir::AbstractString = "outputs/figures",
 	contour_lines::Int = 6,
 	with_surfaces::Bool = true,
 	progress::Bool = true,
+	truncate_k_to_initial_mass::Bool = p.truncateKPlots,
+	k_mass_level::Real = p.plotKMassLevel,
 )
 	mkpath(outdir)
+	k_indices = _plot_k_indices(
+		result,
+		p;
+		truncate_k_to_initial_mass = truncate_k_to_initial_mass,
+		k_mass_level = k_mass_level,
+	)
 
 	_total = with_surfaces ? 20 : 11
 	_pbar = progress ? ProgressMeter.Progress(_total; desc = "Saving figures") : nothing
@@ -1116,47 +1224,441 @@ function save_all_figures(result, p;
 
 	save_figure_1_totals(result, p; outdir = outdir)
 	_tick("figure 1")
-	save_figure_2_distributions(result, p; outdir = outdir, contour_lines = contour_lines)
+	save_figure_2_distributions(result, p; outdir = outdir, contour_lines = contour_lines, k_indices = k_indices)
 	_tick("figure 2")
-	save_figure_2Rel_relative_shares(result, p; outdir = outdir, contour_lines = contour_lines)
+	save_figure_2Rel_relative_shares(result, p; outdir = outdir, contour_lines = contour_lines, k_indices = k_indices)
 	_tick("figure 2Rel")
-	save_figure_3_flux_S_to_I(result, p; outdir = outdir, contour_lines = contour_lines)
+	save_figure_3_flux_S_to_I(result, p; outdir = outdir, contour_lines = contour_lines, k_indices = k_indices)
 	_tick("figure 3")
-	save_figure_4_consumption(result, p; outdir = outdir, contour_lines = contour_lines)
+	save_figure_4_consumption(result, p; outdir = outdir, contour_lines = contour_lines, k_indices = k_indices)
 	_tick("figure 4")
-	save_figure_5_labor(result, p; outdir = outdir, contour_lines = contour_lines)
+	save_figure_5_labor(result, p; outdir = outdir, contour_lines = contour_lines, k_indices = k_indices)
 	_tick("figure 5")
-	save_figure_6_vaccination_q(result, p; outdir = outdir, contour_lines = contour_lines)
+	save_figure_6_vaccination_q(result, p; outdir = outdir, contour_lines = contour_lines, k_indices = k_indices)
 	_tick("figure 6")
-	save_figure_7_vaccination_flow_S_to_R(result, p; outdir = outdir, contour_lines = contour_lines)
+	save_figure_7_vaccination_flow_S_to_R(result, p; outdir = outdir, contour_lines = contour_lines, k_indices = k_indices)
 	_tick("figure 7")
-	save_figure_8_effective_wage_S(result, p; outdir = outdir, contour_lines = contour_lines)
+	save_figure_8_effective_wage_S(result, p; outdir = outdir, contour_lines = contour_lines, k_indices = k_indices)
 	_tick("figure 8")
 	save_figure_9_R0_over_time(result, p; outdir = outdir)
 	_tick("figure 9")
-	save_figure_10_wealth_distribution_total(result, p; outdir = outdir, contour_lines = contour_lines)
+	save_figure_10_wealth_distribution_total(result, p; outdir = outdir, contour_lines = contour_lines, k_indices = k_indices)
 	_tick("figure 10")
 
 	if with_surfaces
-		save_figure_2bis_distributions_surface(result, p; outdir = outdir)
+		save_figure_2bis_distributions_surface(result, p; outdir = outdir, k_indices = k_indices)
 		_tick("figure 2bis")
-		save_figure_2Relbis_relative_shares_surface(result, p; outdir = outdir)
+		save_figure_2Relbis_relative_shares_surface(result, p; outdir = outdir, k_indices = k_indices)
 		_tick("figure 2Relbis")
-		save_figure_3bis_flux_S_to_I_surface(result, p; outdir = outdir)
+		save_figure_3bis_flux_S_to_I_surface(result, p; outdir = outdir, k_indices = k_indices)
 		_tick("figure 3bis")
-		save_figure_4bis_consumption_surface(result, p; outdir = outdir)
+		save_figure_4bis_consumption_surface(result, p; outdir = outdir, k_indices = k_indices)
 		_tick("figure 4bis")
-		save_figure_5bis_labor_surface(result, p; outdir = outdir)
+		save_figure_5bis_labor_surface(result, p; outdir = outdir, k_indices = k_indices)
 		_tick("figure 5bis")
-		save_figure_6bis_vaccination_q_surface(result, p; outdir = outdir)
+		save_figure_6bis_vaccination_q_surface(result, p; outdir = outdir, k_indices = k_indices)
 		_tick("figure 6bis")
-		save_figure_7bis_vaccination_flow_S_to_R_surface(result, p; outdir = outdir)
+		save_figure_7bis_vaccination_flow_S_to_R_surface(result, p; outdir = outdir, k_indices = k_indices)
 		_tick("figure 7bis")
-		save_figure_8bis_effective_wage_S_surface(result, p; outdir = outdir)
+		save_figure_8bis_effective_wage_S_surface(result, p; outdir = outdir, k_indices = k_indices)
 		_tick("figure 8bis")
-		save_figure_10bis_wealth_distribution_total_surface(result, p; outdir = outdir)
+		save_figure_10bis_wealth_distribution_total_surface(result, p; outdir = outdir, k_indices = k_indices)
 		_tick("figure 10bis")
 	end
 
 	return nothing
+end
+
+function _csv_write_row(io, xs...)
+	println(io, join((string(x) for x in xs), ","))
+	return nothing
+end
+
+function _maybe_property(x, name::Symbol, default = NaN)
+	return hasproperty(x, name) ? getproperty(x, name) : default
+end
+
+function _maybe_vector_value(x, name::Symbol, n::Int, default = NaN)
+	if hasproperty(x, name)
+		v = getproperty(x, name)
+		return v[n]
+	end
+	return default
+end
+
+"""
+	save_solution_csv(result, p; outdir="outputs/solution_csv")
+
+Save the numerical solution in long-form CSV files. The exported files are meant
+to make it possible to redraw figures later without re-running the model.
+"""
+function save_solution_csv(result, p;
+	outdir::AbstractString = "outputs/solution_csv",
+)
+	mkpath(outdir)
+
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	k = collect(p.k)
+
+	open(joinpath(outdir, "metadata.csv"), "w") do io
+		_csv_write_row(io, "key", "value")
+		_csv_write_row(io, "Nk", p.Nk)
+		_csv_write_row(io, "MaxK", p.MaxK)
+		_csv_write_row(io, "DeltaK", p.Δk)
+		_csv_write_row(io, "T_End", p.T_End)
+		_csv_write_row(io, "DeltaT", p.Δt)
+		_csv_write_row(io, "xi", p.ξ)
+		_csv_write_row(io, "method", _maybe_property(result, :method, "quasistatic"))
+		_csv_write_row(io, "converged", _maybe_property(result, :converged, ""))
+		_csv_write_row(io, "iterations", _maybe_property(result, :iterations, ""))
+	end
+
+	if haskey(result, :F) && length(result.F) == Nt
+		open(joinpath(outdir, "distributions.csv"), "w") do io
+			_csv_write_row(io, "time_index", "t", "k_index", "k", "phiS", "phiI", "phiC", "phiR")
+			@inbounds for n in 1:Nt
+				Ft = result.F[n]
+				for i in 1:Nk
+					_csv_write_row(io, n, t[n], i, k[i], Ft.ϕSt[i], Ft.ϕIt[i], Ft.ϕCt[i], Ft.ϕRt[i])
+				end
+			end
+		end
+	end
+
+	if haskey(result, :V) && length(result.V) == Nt
+		open(joinpath(outdir, "values.csv"), "w") do io
+			_csv_write_row(io, "time_index", "t", "k_index", "k", "VS", "VI", "VC", "VR", "w", "r", "LI")
+			@inbounds for n in 1:Nt
+				Vn = result.V[n]
+				w = _maybe_property(Vn, :w)
+				r = _maybe_property(Vn, :r)
+				LI = _maybe_property(Vn, :LI)
+				for i in 1:Nk
+					_csv_write_row(io, n, t[n], i, k[i], Vn.VS[i], Vn.VI[i], Vn.VC[i], Vn.VR[i], w, r, LI)
+				end
+			end
+		end
+	end
+
+	if haskey(result, :controls) && length(result.controls) == Nt
+		open(joinpath(outdir, "controls.csv"), "w") do io
+			_csv_write_row(
+				io,
+				"time_index", "t", "k_index", "k",
+				"cS", "cI", "cC", "cR",
+				"lS", "lI", "lC", "lR",
+				"q", "xiS",
+				"bS", "bI", "bC", "bR",
+				"infection_rate",
+			)
+			@inbounds for n in 1:Nt
+				c = result.controls[n]
+				xiS = _maybe_property(c, :ξS, fill(NaN, Nk))
+				for i in 1:Nk
+					_csv_write_row(
+						io,
+						n, t[n], i, k[i],
+						c.cS[i], c.cI[i], c.cC[i], c.cR[i],
+						c.lOpt.lS[i], c.lOpt.lI[i], c.lOpt.lC[i], c.lOpt.lR[i],
+						c.q_rate[i], xiS[i],
+						c.bS[i], c.bI[i], c.bC[i], c.bR[i],
+						c.infection_rate[i],
+					)
+				end
+			end
+		end
+
+		open(joinpath(outdir, "aggregates_prices.csv"), "w") do io
+			_csv_write_row(io, "time_index", "t", "K", "L", "LI", "w", "r")
+			prices = _maybe_property(result, :prices, nothing)
+			@inbounds for n in 1:Nt
+				c = result.controls[n]
+				K = prices === nothing ? _maybe_property(c, :K) : _maybe_vector_value(prices, :K, n)
+				L = prices === nothing ? _maybe_property(c, :L) : _maybe_vector_value(prices, :L, n)
+				LI = prices === nothing ? _maybe_property(c, :LI) : _maybe_vector_value(prices, :LI, n)
+				w = prices === nothing ? _maybe_property(c, :w) : _maybe_vector_value(prices, :w, n)
+				r = prices === nothing ? _maybe_property(c, :r) : _maybe_vector_value(prices, :r, n)
+				_csv_write_row(io, n, t[n], K, L, LI, w, r)
+			end
+		end
+	end
+
+	if haskey(result, :diagnostics)
+		diag = result.diagnostics
+		if hasproperty(diag, :err)
+			open(joinpath(outdir, "dynamic_diagnostics.csv"), "w") do io
+				_csv_write_row(
+					io,
+					"iteration", "err", "errF", "errV", "errW", "errR",
+					"mass_error", "min_density", "max_negative_before_projection",
+					"normalization_correction",
+				)
+				for it in eachindex(diag.err)
+					_csv_write_row(
+						io,
+						it,
+						diag.err[it],
+						diag.errF[it],
+						diag.errV[it],
+						diag.errW[it],
+						diag.errR[it],
+						diag.mass_error[it],
+						diag.min_density[it],
+						diag.max_negative_before_projection[it],
+						diag.normalization_correction[it],
+					)
+				end
+			end
+		end
+	end
+
+	return outdir
+end
+
+function _read_csv_rows(path::AbstractString)
+	lines = readlines(path)
+	if isempty(lines)
+		error("CSV file is empty: $path")
+	end
+	header = split(lines[1], ",")
+	rows = [split(line, ",") for line in lines[2:end] if !isempty(strip(line))]
+	return header, rows
+end
+
+function _csv_index(header, name::AbstractString)
+	idx = findfirst(==(name), header)
+	if idx === nothing
+		error("Missing CSV column '$name'")
+	end
+	return idx
+end
+
+function _parse_csv_float(x)
+	s = strip(String(x))
+	return isempty(s) ? NaN : parse(Float64, s)
+end
+
+function _parse_csv_int(x)
+	return parse(Int, strip(String(x)))
+end
+
+function _load_distributions_csv(path::AbstractString, p)
+	header, rows = _read_csv_rows(path)
+	it = _csv_index(header, "time_index")
+	tt = _csv_index(header, "t")
+	ik = _csv_index(header, "k_index")
+	iS = _csv_index(header, "phiS")
+	iI = _csv_index(header, "phiI")
+	iC = _csv_index(header, "phiC")
+	iR = _csv_index(header, "phiR")
+
+	Nt = maximum(_parse_csv_int(row[it]) for row in rows)
+	t = zeros(Float64, Nt)
+	ΦS = [zeros(Float64, p.Nk) for _ in 1:Nt]
+	ΦI = [zeros(Float64, p.Nk) for _ in 1:Nt]
+	ΦC = [zeros(Float64, p.Nk) for _ in 1:Nt]
+	ΦR = [zeros(Float64, p.Nk) for _ in 1:Nt]
+
+	for row in rows
+		n = _parse_csv_int(row[it])
+		i = _parse_csv_int(row[ik])
+		t[n] = _parse_csv_float(row[tt])
+		ΦS[n][i] = _parse_csv_float(row[iS])
+		ΦI[n][i] = _parse_csv_float(row[iI])
+		ΦC[n][i] = _parse_csv_float(row[iC])
+		ΦR[n][i] = _parse_csv_float(row[iR])
+	end
+
+	F = [(ϕSt = ΦS[n], ϕIt = ΦI[n], ϕCt = ΦC[n], ϕRt = ΦR[n]) for n in 1:Nt]
+	return t, F
+end
+
+function _load_values_csv(path::AbstractString, p, Nt::Int)
+	header, rows = _read_csv_rows(path)
+	it = _csv_index(header, "time_index")
+	ik = _csv_index(header, "k_index")
+	iVS = _csv_index(header, "VS")
+	iVI = _csv_index(header, "VI")
+	iVC = _csv_index(header, "VC")
+	iVR = _csv_index(header, "VR")
+	iw = _csv_index(header, "w")
+	ir = _csv_index(header, "r")
+	iLI = _csv_index(header, "LI")
+
+	VS = [zeros(Float64, p.Nk) for _ in 1:Nt]
+	VI = [zeros(Float64, p.Nk) for _ in 1:Nt]
+	VC = [zeros(Float64, p.Nk) for _ in 1:Nt]
+	VR = [zeros(Float64, p.Nk) for _ in 1:Nt]
+	w = fill(NaN, Nt)
+	r = fill(NaN, Nt)
+	LI = fill(NaN, Nt)
+
+	for row in rows
+		n = _parse_csv_int(row[it])
+		i = _parse_csv_int(row[ik])
+		VS[n][i] = _parse_csv_float(row[iVS])
+		VI[n][i] = _parse_csv_float(row[iVI])
+		VC[n][i] = _parse_csv_float(row[iVC])
+		VR[n][i] = _parse_csv_float(row[iVR])
+		if i == 1
+			w[n] = _parse_csv_float(row[iw])
+			r[n] = _parse_csv_float(row[ir])
+			LI[n] = _parse_csv_float(row[iLI])
+		end
+	end
+
+	return [(VS = VS[n], VI = VI[n], VC = VC[n], VR = VR[n], w = w[n], r = r[n], LI = LI[n]) for n in 1:Nt]
+end
+
+function _load_controls_csv(path::AbstractString, p, Nt::Int)
+	header, rows = _read_csv_rows(path)
+	it = _csv_index(header, "time_index")
+	ik = _csv_index(header, "k_index")
+	cols = Dict(name => _csv_index(header, name) for name in (
+		"cS", "cI", "cC", "cR",
+		"lS", "lI", "lC", "lR",
+		"q", "xiS",
+		"bS", "bI", "bC", "bR",
+		"infection_rate",
+	))
+
+	data = Dict(name => [zeros(Float64, p.Nk) for _ in 1:Nt] for name in keys(cols))
+	for row in rows
+		n = _parse_csv_int(row[it])
+		i = _parse_csv_int(row[ik])
+		for (name, col) in cols
+			data[name][n][i] = _parse_csv_float(row[col])
+		end
+	end
+
+	return [
+		(
+			lOpt = (lS = data["lS"][n], lI = data["lI"][n], lC = data["lC"][n], lR = data["lR"][n]),
+			cS = data["cS"][n],
+			cI = data["cI"][n],
+			cC = data["cC"][n],
+			cR = data["cR"][n],
+			bS = data["bS"][n],
+			bI = data["bI"][n],
+			bC = data["bC"][n],
+			bR = data["bR"][n],
+			infection_rate = data["infection_rate"][n],
+			q_rate = data["q"][n],
+			ξS = data["xiS"][n],
+		)
+		for n in 1:Nt
+	]
+end
+
+function _load_aggregates_prices_csv(path::AbstractString, Nt::Int)
+	header, rows = _read_csv_rows(path)
+	it = _csv_index(header, "time_index")
+	iK = _csv_index(header, "K")
+	iL = _csv_index(header, "L")
+	iLI = _csv_index(header, "LI")
+	iw = _csv_index(header, "w")
+	ir = _csv_index(header, "r")
+
+	K = fill(NaN, Nt)
+	L = fill(NaN, Nt)
+	LI = fill(NaN, Nt)
+	w = fill(NaN, Nt)
+	r = fill(NaN, Nt)
+	for row in rows
+		n = _parse_csv_int(row[it])
+		K[n] = _parse_csv_float(row[iK])
+		L[n] = _parse_csv_float(row[iL])
+		LI[n] = _parse_csv_float(row[iLI])
+		w[n] = _parse_csv_float(row[iw])
+		r[n] = _parse_csv_float(row[ir])
+	end
+	return (prices = (w = w, r = r, K = K, L = L, LI = LI), aggregates = (K = K, L = L, LI = LI))
+end
+
+function _load_dynamic_diagnostics_csv(path::AbstractString)
+	header, rows = _read_csv_rows(path)
+	err = Float64[]
+	errF = Float64[]
+	errV = Float64[]
+	errW = Float64[]
+	errR = Float64[]
+	mass_error = Float64[]
+	min_density = Float64[]
+	max_negative = Float64[]
+	normalization_correction = Float64[]
+
+	for row in rows
+		push!(err, _parse_csv_float(row[_csv_index(header, "err")]))
+		push!(errF, _parse_csv_float(row[_csv_index(header, "errF")]))
+		push!(errV, _parse_csv_float(row[_csv_index(header, "errV")]))
+		push!(errW, _parse_csv_float(row[_csv_index(header, "errW")]))
+		push!(errR, _parse_csv_float(row[_csv_index(header, "errR")]))
+		push!(mass_error, _parse_csv_float(row[_csv_index(header, "mass_error")]))
+		push!(min_density, _parse_csv_float(row[_csv_index(header, "min_density")]))
+		push!(max_negative, _parse_csv_float(row[_csv_index(header, "max_negative_before_projection")]))
+		push!(normalization_correction, _parse_csv_float(row[_csv_index(header, "normalization_correction")]))
+	end
+
+	return (
+		err = err,
+		errF = errF,
+		errV = errV,
+		errW = errW,
+		errR = errR,
+		mass_error = mass_error,
+		min_density = min_density,
+		max_negative_before_projection = max_negative,
+		normalization_correction = normalization_correction,
+	)
+end
+
+"""
+	load_solution_csv(outdir, p)
+
+Reconstruct a result-like object from CSV files produced by `save_solution_csv`.
+Pass a parameter object `p` with the same capital grid used to generate the CSVs.
+"""
+function load_solution_csv(outdir::AbstractString, p)
+	dist_path = joinpath(outdir, "distributions.csv")
+	if !isfile(dist_path)
+		error("Missing distributions.csv in $outdir")
+	end
+
+	t, F = _load_distributions_csv(dist_path, p)
+	Nt = length(t)
+	V = isfile(joinpath(outdir, "values.csv")) ? _load_values_csv(joinpath(outdir, "values.csv"), p, Nt) : Any[]
+	controls = isfile(joinpath(outdir, "controls.csv")) ? _load_controls_csv(joinpath(outdir, "controls.csv"), p, Nt) : Any[]
+	ap = isfile(joinpath(outdir, "aggregates_prices.csv")) ?
+		_load_aggregates_prices_csv(joinpath(outdir, "aggregates_prices.csv"), Nt) :
+		(prices = nothing, aggregates = nothing)
+	diag_path = joinpath(outdir, "dynamic_diagnostics.csv")
+
+	if isfile(diag_path)
+		return (
+			t = t,
+			F = F,
+			V = V,
+			controls = controls,
+			prices = ap.prices,
+			aggregates = ap.aggregates,
+			diagnostics = _load_dynamic_diagnostics_csv(diag_path),
+			method = :loaded_from_csv,
+		)
+	end
+
+	if ap.prices === nothing
+		return (t = t, F = F, V = V, controls = controls, method = :loaded_from_csv)
+	end
+
+	return (
+		t = t,
+		F = F,
+		V = V,
+		controls = controls,
+		prices = ap.prices,
+		aggregates = ap.aggregates,
+		method = :loaded_from_csv,
+	)
 end
