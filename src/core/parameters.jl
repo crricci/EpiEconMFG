@@ -23,10 +23,10 @@
     δ::T = 0.05           # capital depreciation rate
     α::T = 0.35           # Production function
     A::T = 1.0            # Total factor productivity
-    dI::T = 0.1           # disutility of being Infected
-    dC::T = 0.2           # disutility of being Contained
+    dI::T = 10.0          # disutility of being Infected
+    dC::T = 20.0          # disutility of being Contained
     γ::T = 10.0           # coefficient quadratic cost of propensity to vaccination
-    ξ::T = 0.001          # monetary cost per unit of vaccination intensity ξ(t,k); default constant
+    ξ::T = 0.25           # monetary cost per unit of vaccination intensity ξ(t,k); default constant
     qMax::T = 100.0       # cap on vaccination intensity for numerics (q >= 0, bounded above by qMax)
     θ::T = 0.9            # preference consumption vs leisure [0,1]
     ηS::T = 1.0           # productivity of Susceptible agents (benchmark)
@@ -84,8 +84,9 @@
     progressHJB_every::Int = 20   # show HJB value-iteration counter every this many HJB iterations
 
     # plotting
-    truncateKPlots::Bool = true    # plot k-dependent figures only up to an initial-mass quantile
-    plotKMassLevel::T = 0.9        # initial population mass shown on k-dependent figures
+    truncateKPlots::Bool = true    # plot k-dependent figures on an initial-mass interval
+    cutKMassLevelBottom::T = 0.025  # lower initial population mass cut for k-dependent figures
+    cutKMassLevelTop::T = 0.975     # upper initial population mass cut for k-dependent figures
     plotVaccinationLogScale::Bool = true # plot vaccination intensity as log10(1+q)
     
     # general
@@ -192,9 +193,24 @@ function create_test_distribution(p)
     Rt = r0 .* base
 
     # Numerical safety: enforce the requested compartment masses (within floating error).
-    St .*= (s0 / (sum(St) * p.Δk))
-    It .*= (i0 / (sum(It) * p.Δk))
-    Ct .*= (c0 == 0 ? 0.0 : (c0 / (sum(Ct) * p.Δk)))
-    Rt .*= (r0 == 0 ? 0.0 : (r0 / (sum(Rt) * p.Δk)))
+    # Zero-mass compartments must stay exactly zero; otherwise 0/0 would create NaNs.
+    function normalize_compartment!(density, target_mass, name)
+        if target_mass == 0
+            fill!(density, 0.0)
+            return density
+        end
+
+        current_mass = sum(density) * p.Δk
+        if !(isfinite(current_mass) && current_mass > 0)
+            throw(ArgumentError("Cannot normalize initial $name mass: current_mass=$current_mass target_mass=$target_mass"))
+        end
+        density .*= target_mass / current_mass
+        return density
+    end
+
+    normalize_compartment!(St, s0, "S")
+    normalize_compartment!(It, i0, "I")
+    normalize_compartment!(Ct, c0, "C")
+    normalize_compartment!(Rt, r0, "R")
     return (ϕSt = St, ϕIt = It, ϕCt = Ct, ϕRt = Rt)
 end

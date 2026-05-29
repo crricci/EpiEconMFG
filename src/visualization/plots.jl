@@ -47,13 +47,17 @@ end
 
 function _plot_k_indices(result, p;
 	truncate_k_to_initial_mass::Bool = true,
-	k_mass_level::Real = 0.9,
+	cut_k_mass_level_bottom::Real = 0.01,
+	cut_k_mass_level_top::Real = 0.9,
 )
 	if !truncate_k_to_initial_mass
 		return collect(1:p.Nk)
 	end
-	if !(0 < k_mass_level <= 1)
-		error("k_mass_level must be in (0, 1], got $k_mass_level")
+	if !(0 <= cut_k_mass_level_bottom < cut_k_mass_level_top <= 1)
+		error(
+			"Require 0 <= cut_k_mass_level_bottom < cut_k_mass_level_top <= 1, got " *
+			"bottom=$cut_k_mass_level_bottom top=$cut_k_mass_level_top"
+		)
 	end
 	if !haskey(result, :F) || isempty(result.F)
 		error("Cannot compute k plotting range: result.F is missing or empty")
@@ -67,16 +71,23 @@ function _plot_k_indices(result, p;
 	end
 
 	cumulative = 0.0
+	first_idx = 1
 	last_idx = p.Nk
+	found_first = cut_k_mass_level_bottom == 0
 	@inbounds for i in 1:p.Nk
 		cumulative += mass_density0[i] * p.Δk
-		if cumulative / total_mass0 >= k_mass_level
+		cum_share = cumulative / total_mass0
+		if !found_first && cum_share >= cut_k_mass_level_bottom
+			first_idx = i
+			found_first = true
+		end
+		if cum_share >= cut_k_mass_level_top
 			last_idx = i
 			break
 		end
 	end
 
-	return collect(1:max(1, last_idx))
+	return collect(max(1, first_idx):max(first_idx, last_idx))
 end
 
 function _restrict_k(k, k_indices, mats...)
@@ -276,14 +287,29 @@ function save_figure_1_totals(result, p;
 		Vax_flow[n] = sum(result.controls[n].q_rate .* Ft.ϕSt) * p.Δk
 	end
 
-	fig = CairoMakie.Figure(size = (900, 450))
-	ax = CairoMakie.Axis(fig[1, 1], xlabel = "t", ylabel = "Population share")
-	CairoMakie.lines!(ax, t, S_tot, label = "Susceptible")
-	CairoMakie.lines!(ax, t, I_tot, label = "Infected")
-	CairoMakie.lines!(ax, t, C_tot, label = "Contained")
-	CairoMakie.lines!(ax, t, R_tot, label = "Recovered")
-	CairoMakie.lines!(ax, t, Vax_flow, label = "Vaccination flow ∫ q·S dk")
-	CairoMakie.axislegend(ax, position = :rt)
+	fig = CairoMakie.Figure(size = (950, 480))
+	ax_left = CairoMakie.Axis(fig[1, 1], xlabel = "t", ylabel = "S, R population share")
+	ax_right = CairoMakie.Axis(
+		fig[1, 1],
+		yaxisposition = :right,
+		ylabel = "I, C, vaccination flow",
+		backgroundcolor = :transparent,
+	)
+	CairoMakie.hidexdecorations!(ax_right; grid = false)
+	CairoMakie.hideydecorations!(ax_right; label = false, ticklabels = false, ticks = false, grid = true)
+	CairoMakie.linkxaxes!(ax_left, ax_right)
+
+	lS = CairoMakie.lines!(ax_left, t, S_tot; label = "Susceptible", color = :steelblue, linewidth = 2)
+	lR = CairoMakie.lines!(ax_left, t, R_tot; label = "Recovered", color = :seagreen, linewidth = 2)
+	lI = CairoMakie.lines!(ax_right, t, I_tot; label = "Infected", color = :crimson, linewidth = 2)
+	lC = CairoMakie.lines!(ax_right, t, C_tot; label = "Contained", color = :darkorange, linewidth = 2)
+	lV = CairoMakie.lines!(ax_right, t, Vax_flow; label = "Vaccination flow ∫ q·S dk", color = :purple, linewidth = 2)
+	CairoMakie.axislegend(
+		ax_left,
+		[lS, lR, lI, lC, lV],
+		["Susceptible", "Recovered", "Infected", "Contained", "Vaccination flow ∫ q·S dk"];
+		position = :rt,
+	)
 	CairoMakie.save(joinpath(outdir, filename), fig)
 	return nothing
 end
@@ -1193,6 +1219,98 @@ function save_figure_10bis_wealth_distribution_total_surface(result, p;
 	return nothing
 end
 
+function _relative_C_share_matrix(result, p, Nt::Int, Nk::Int)
+	ΦS = _time_by_k_matrix(n -> result.F[n].ϕSt, Nt, Nk)
+	ΦI = _time_by_k_matrix(n -> result.F[n].ϕIt, Nt, Nk)
+	ΦC = _time_by_k_matrix(n -> result.F[n].ϕCt, Nt, Nk)
+	ΦR = _time_by_k_matrix(n -> result.F[n].ϕRt, Nt, Nk)
+
+	den = ΦS .+ ΦI .+ ΦC .+ ΦR
+	RC = similar(den, Float64)
+	@inbounds for j in axes(den, 2)
+		for i in axes(den, 1)
+			d = Float64(den[i, j])
+			RC[i, j] = (isfinite(d) && d > 0) ? Float64(ΦC[i, j]) / d : 0.0
+		end
+	end
+	return RC
+end
+
+function save_figure_11_relative_dead_flow(result, p;
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_11_heatmap_C_share_tk.pdf",
+	contour_lines::Int = 6,
+	k_indices = nothing,
+)
+	mkpath(outdir)
+
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	k = collect(p.k)
+	if Nt == 0
+		error("result.t is empty")
+	end
+	if length(result.F) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(F)=$(length(result.F))")
+	end
+
+	RC = _relative_C_share_matrix(result, p, Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, RC = _restrict_k(k, kidx, RC)
+
+	rc_lo, rc_hi = _finite_minmax(RC)
+	clims = _safe_colorrange(rc_lo, rc_hi)
+	fig = CairoMakie.Figure(size = (1100, 650))
+	ax = CairoMakie.Axis(fig[1, 1], title = "C/(S+I+C+R)", xlabel = "t", ylabel = "k")
+	hm = _heatmap_with_contours!(ax, t, k, RC; colormap = :inferno, colorrange = clims, contour_lines = contour_lines)
+	CairoMakie.Colorbar(fig[1, 2], hm)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
+function save_figure_11bis_relative_dead_flow_surface(result, p;
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_11bis_surface_C_share_tk.png",
+	maxNt::Int = 140,
+	maxNk::Int = 140,
+	rasterize = 1,
+	px_per_unit::Real = 1.35,
+	jpg_quality::Int = 92,
+	k_indices = nothing,
+)
+	mkpath(outdir)
+
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	k = collect(p.k)
+	if Nt == 0
+		error("result.t is empty")
+	end
+	if length(result.F) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(F)=$(length(result.F))")
+	end
+
+	RC = _relative_C_share_matrix(result, p, Nt, Nk)
+	kidx = isnothing(k_indices) ? collect(1:Nk) : k_indices
+	k, RC = _restrict_k(k, kidx, RC)
+
+	rc_lo, rc_hi = _finite_minmax(RC)
+	clims = _safe_colorrange(rc_lo, rc_hi)
+	fig = CairoMakie.Figure(size = (1050, 650))
+	ax = CairoMakie.Axis3(fig[1, 1], title = "C/(S+I+C+R)", xlabel = "t", ylabel = "k", zlabel = "C/(S+I+C+R)")
+	plt = _surface_plot!(ax, t, k, RC; colormap = :inferno, colorrange = clims, maxNt = maxNt, maxNk = maxNk, rasterize = rasterize)
+	CairoMakie.Colorbar(fig[1, 2], plt)
+	outpath = joinpath(outdir, filename)
+	if endswith(lowercase(filename), ".jpg") || endswith(lowercase(filename), ".jpeg")
+		_save_as_jpg(outpath, fig; px_per_unit = px_per_unit, quality = jpg_quality)
+	else
+		CairoMakie.save(outpath, fig)
+	end
+	return nothing
+end
+
 """
 	save_all_figures(result, p; outdir="outputs/figures", contour_lines=6)
 
@@ -1207,8 +1325,9 @@ Output filenames use the `figure_#_...` prefix (e.g. `figure_1_...`).
 Heatmaps are grouped into multi-panel figures (2×2 or 1×3) and include a few
 contour lines overlaid to improve readability.
 
-By default, figures with a capital-grid axis are shown only up to the smallest
-capital level containing `p.plotKMassLevel` of the initial population mass.
+By default, figures with a capital-grid axis are shown on the smallest capital
+interval containing the initial population mass between `p.cutKMassLevelBottom`
+and `p.cutKMassLevelTop`.
 Set `truncate_k_to_initial_mass=false` to plot the full capital grid.
 """
 function save_all_figures(result, p;
@@ -1217,17 +1336,19 @@ function save_all_figures(result, p;
 	with_surfaces::Bool = true,
 	progress::Bool = true,
 	truncate_k_to_initial_mass::Bool = p.truncateKPlots,
-	k_mass_level::Real = p.plotKMassLevel,
+	cut_k_mass_level_bottom::Real = p.cutKMassLevelBottom,
+	cut_k_mass_level_top::Real = p.cutKMassLevelTop,
 )
 	mkpath(outdir)
 	k_indices = _plot_k_indices(
 		result,
 		p;
 		truncate_k_to_initial_mass = truncate_k_to_initial_mass,
-		k_mass_level = k_mass_level,
+		cut_k_mass_level_bottom = cut_k_mass_level_bottom,
+		cut_k_mass_level_top = cut_k_mass_level_top,
 	)
 
-	_total = with_surfaces ? 20 : 11
+	_total = with_surfaces ? 22 : 12
 	_pbar = progress ? ProgressMeter.Progress(_total; desc = "Saving figures") : nothing
 	_tick(label::AbstractString) = (_pbar === nothing ? nothing : ProgressMeter.next!(_pbar; showvalues = [("step", label)]))
 
@@ -1253,6 +1374,8 @@ function save_all_figures(result, p;
 	_tick("figure 9")
 	save_figure_10_wealth_distribution_total(result, p; outdir = outdir, contour_lines = contour_lines, k_indices = k_indices)
 	_tick("figure 10")
+	save_figure_11_relative_dead_flow(result, p; outdir = outdir, contour_lines = contour_lines, k_indices = k_indices)
+	_tick("figure 11")
 
 	if with_surfaces
 		save_figure_2bis_distributions_surface(result, p; outdir = outdir, k_indices = k_indices)
@@ -1273,6 +1396,8 @@ function save_all_figures(result, p;
 		_tick("figure 8bis")
 		save_figure_10bis_wealth_distribution_total_surface(result, p; outdir = outdir, k_indices = k_indices)
 		_tick("figure 10bis")
+		save_figure_11bis_relative_dead_flow_surface(result, p; outdir = outdir, k_indices = k_indices)
+		_tick("figure 11bis")
 	end
 
 	return nothing
