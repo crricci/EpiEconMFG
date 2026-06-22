@@ -29,7 +29,7 @@ From the Julia REPL:
 include("main.jl")
 
 p = EpiEconMFG.MFGEpiEcon()
-F0 = EpiEconMFG.create_test_distribution(p)
+F0 = EpiEconMFG.initial_distribution(p)
 
 result = run_dynamic(p = p, F0 = F0, show_progress = true)
 ```
@@ -40,10 +40,30 @@ To run the quasi-static solver instead:
 include("main.jl")
 
 p = EpiEconMFG.MFGEpiEcon()
-F0 = EpiEconMFG.create_test_distribution(p)
+F0 = EpiEconMFG.initial_distribution(p)
 
 result_qs = run(p = p, F0 = F0, show_progress = true)
 ```
+
+To restart from a CSV initial condition instead of the generated lognormal
+distribution:
+
+```julia
+p = EpiEconMFG.MFGEpiEcon(
+    N = 1e4,
+    I0 = 1.0,
+    MaxK = 20.0,
+    Δk = 0.2,
+    useCsvInitialDistribution = true,
+    initialDistributionCsvDir = "data/initial_conditions/dynamic_NoEpidemic_long_restart_from_finalS",
+)
+
+result = run_dynamic(p = p, show_progress = true)
+```
+
+When `useCsvInitialDistribution = true`, the CSV is interpreted only as the
+initial wealth distribution over `k`. The epidemiological initial masses are
+still controlled by `N` and `I0`, with initial infected share `I0 / N`.
 
 ## Repository Structure
 

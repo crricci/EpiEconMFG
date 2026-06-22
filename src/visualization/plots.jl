@@ -98,6 +98,256 @@ function _restrict_k(k, k_indices, mats...)
 	return tuple(out...)
 end
 
+function _weighted_gini_sorted(x, w)
+	total_weight = sum(w)
+	total_wealth = sum(w .* x)
+	if !(isfinite(total_weight) && total_weight > 0 && isfinite(total_wealth) && total_wealth > 0)
+		return 0.0
+	end
+
+	cumw = 0.0
+	cumwx = 0.0
+	pair_gap = 0.0
+	@inbounds for i in eachindex(x)
+		wi = Float64(w[i])
+		xi = Float64(x[i])
+		if isfinite(wi) && wi > 0 && isfinite(xi)
+			pair_gap += wi * (xi * cumw - cumwx)
+			cumw += wi
+			cumwx += wi * xi
+		end
+	end
+	return clamp(pair_gap / (total_weight * total_wealth), 0.0, 1.0)
+end
+
+function wealth_gini_over_time(result, p)
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	if Nt == 0
+		error("result.t is empty")
+	end
+	if length(result.F) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(F)=$(length(result.F))")
+	end
+
+	k = collect(Float64, p.k)
+	gini = Vector{Float64}(undef, Nt)
+	weights = Vector{Float64}(undef, Nk)
+	@inbounds for n in 1:Nt
+		Ft = result.F[n]
+		weights .= (Ft.ϕSt .+ Ft.ϕIt .+ Ft.ϕCt .+ Ft.ϕRt) .* p.Δk
+		gini[n] = _weighted_gini_sorted(k, weights)
+	end
+	return gini
+end
+
+function _pchip_endpoint_slope(h1, h2, δ1, δ2)
+	m = ((2h1 + h2) * δ1 - h1 * δ2) / (h1 + h2)
+	if signbit(m) != signbit(δ1) && m != 0 && δ1 != 0
+		return zero(m)
+	end
+	if signbit(δ1) != signbit(δ2) && abs(m) > 3abs(δ1)
+		return 3δ1
+	end
+	return m
+end
+
+function _pchip_slopes(x, y)
+	n = length(x)
+	n == length(y) || error("x and y must have the same length")
+	n >= 2 || error("Need at least two grid points for spline interpolation")
+
+	h = diff(x)
+	δ = diff(y) ./ h
+	m = zeros(Float64, n)
+	if n == 2
+		m[1] = δ[1]
+		m[2] = δ[1]
+		return m
+	end
+
+	m[1] = _pchip_endpoint_slope(h[1], h[2], δ[1], δ[2])
+	m[end] = _pchip_endpoint_slope(h[end], h[end - 1], δ[end], δ[end - 1])
+	@inbounds for i in 2:(n - 1)
+		δl = δ[i - 1]
+		δr = δ[i]
+		if δl == 0 || δr == 0 || signbit(δl) != signbit(δr)
+			m[i] = 0.0
+		else
+			w1 = 2h[i] + h[i - 1]
+			w2 = h[i] + 2h[i - 1]
+			m[i] = (w1 + w2) / (w1 / δl + w2 / δr)
+		end
+	end
+	return m
+end
+
+function _pchip_evaluate_segment(y0, y1, m0, m1, h, τ)
+	τ2 = τ * τ
+	τ3 = τ2 * τ
+	h00 = 2τ3 - 3τ2 + 1
+	h10 = τ3 - 2τ2 + τ
+	h01 = -2τ3 + 3τ2
+	h11 = τ3 - τ2
+	return h00 * y0 + h10 * h * m0 + h01 * y1 + h11 * h * m1
+end
+
+function _smooth_density_on_grid(k, mass_density; bandwidth = nothing)
+	x = Float64.(k)
+	y = max.(Float64.(mass_density), 0.0)
+	n = length(x)
+	n >= 2 || error("Need at least two grid points for smoothing")
+	h = bandwidth === nothing ? 2 * (x[2] - x[1]) : Float64(bandwidth)
+	h > 0 || error("Smoothing bandwidth must be positive")
+
+	ys = Vector{Float64}(undef, n)
+	@inbounds for i in 1:n
+		num = 0.0
+		den = 0.0
+		xi = x[i]
+		for j in 1:n
+			u = (xi - x[j]) / h
+			w = exp(-0.5 * u * u)
+			num += w * y[j]
+			den += w
+		end
+		ys[i] = den > 0 ? max(num / den, 0.0) : 0.0
+	end
+
+	dx = x[2] - x[1]
+	original_mass = sum(y) * dx
+	smoothed_mass = sum(ys) * dx
+	if isfinite(original_mass) && original_mass > 0 && isfinite(smoothed_mass) && smoothed_mass > 0
+		ys .*= original_mass / smoothed_mass
+	end
+	return x, ys
+end
+
+function _refine_density_with_pchip(k, mass_density; refine_per_interval::Int = 16, bandwidth = nothing)
+	refine_per_interval >= 1 || error("refine_per_interval must be >= 1")
+	x, y = _smooth_density_on_grid(k, mass_density; bandwidth = bandwidth)
+	m = _pchip_slopes(x, y)
+	n = length(x)
+	nfine = (n - 1) * refine_per_interval + 1
+	xfine = Vector{Float64}(undef, nfine)
+	yfine = Vector{Float64}(undef, nfine)
+	idx = 1
+	@inbounds for i in 1:(n - 1)
+		h = x[i + 1] - x[i]
+		for j in 0:(refine_per_interval - 1)
+			τ = j / refine_per_interval
+			xfine[idx] = x[i] + τ * h
+			yfine[idx] = max(0.0, _pchip_evaluate_segment(y[i], y[i + 1], m[i], m[i + 1], h, τ))
+			idx += 1
+		end
+	end
+	xfine[end] = x[end]
+	yfine[end] = max(0.0, y[end])
+	return xfine, yfine
+end
+
+function _cumulative_trapezoid(x, y)
+	n = length(x)
+	n == length(y) || error("x and y must have the same length")
+	cum = zeros(Float64, n)
+	@inbounds for i in 2:n
+		cum[i] = cum[i - 1] + 0.5 * (y[i - 1] + y[i]) * (x[i] - x[i - 1])
+	end
+	return cum
+end
+
+function _interpolate_cumulative(target, x, y)
+	if target <= x[1]
+		return y[1]
+	end
+	if target >= x[end]
+		return y[end]
+	end
+	idx = searchsortedfirst(x, target)
+	x0 = x[idx - 1]
+	x1 = x[idx]
+	y0 = y[idx - 1]
+	y1 = y[idx]
+	if x1 <= x0
+		return y1
+	end
+	ω = (target - x0) / (x1 - x0)
+	return (1 - ω) * y0 + ω * y1
+end
+
+function _wealth_share_by_population_tail(mass_density, k, Δk;
+	population_share::Real,
+	tail::Symbol,
+	refine_per_interval::Int = 16,
+	bandwidth = nothing,
+)
+	if !(0.0 < population_share <= 1.0)
+		error("population_share must lie in (0, 1], got $population_share")
+	end
+
+	xfine, yfine = _refine_density_with_pchip(k, mass_density; refine_per_interval = refine_per_interval, bandwidth = bandwidth)
+	cum_mass = _cumulative_trapezoid(xfine, yfine)
+	cum_wealth = _cumulative_trapezoid(xfine, yfine .* xfine)
+	total_mass = cum_mass[end]
+	total_wealth = cum_wealth[end]
+	if !(isfinite(total_mass) && total_mass > 0 && isfinite(total_wealth) && total_wealth > 0)
+		return 0.0
+	end
+
+	if tail == :bottom
+		target_mass = population_share * total_mass
+		wealth_tail = _interpolate_cumulative(target_mass, cum_mass, cum_wealth)
+		return clamp(wealth_tail / total_wealth, 0.0, 1.0)
+	elseif tail == :top
+		target_mass = (1 - population_share) * total_mass
+		wealth_below = _interpolate_cumulative(target_mass, cum_mass, cum_wealth)
+		return clamp(1 - wealth_below / total_wealth, 0.0, 1.0)
+	end
+
+	error("Unsupported tail=$tail. Use :bottom or :top.")
+end
+
+function wealth_tail_share_over_time(result, p;
+	population_share::Real,
+	tail::Symbol,
+	refine_per_interval::Int = 16,
+	bandwidth = nothing,
+)
+	t = result.t
+	Nt = length(t)
+	Nk = p.Nk
+	if Nt == 0
+		error("result.t is empty")
+	end
+	if length(result.F) != Nt
+		error("Inconsistent result lengths: length(t)=$Nt, length(F)=$(length(result.F))")
+	end
+
+	k = collect(Float64, p.k)
+	share = Vector{Float64}(undef, Nt)
+	mass_density = Vector{Float64}(undef, Nk)
+	@inbounds for n in 1:Nt
+		Ft = result.F[n]
+		mass_density .= Ft.ϕSt .+ Ft.ϕIt .+ Ft.ϕCt .+ Ft.ϕRt
+		share[n] = _wealth_share_by_population_tail(
+			mass_density,
+			k,
+			p.Δk;
+			population_share = population_share,
+			tail = tail,
+			refine_per_interval = refine_per_interval,
+			bandwidth = bandwidth,
+		)
+	end
+	return share
+end
+
+function _nearest_time_index(t, target_t::Real)
+	idx = argmin(abs.(t .- target_t))
+	return idx
+end
+
 function _plot_vaccination_matrix(Q, p)
 	if p.plotVaccinationLogScale
 		return log10.(1 .+ max.(Q, 0.0)), "log10(1+q)", "Vaccination intensity log10(1+q)"
@@ -126,6 +376,18 @@ function _safe_colorrange(lo, hi)
 	end
 	δ = eps(Float64(max(abs(lo), 1.0)))
 	return (Float64(lo), Float64(lo + δ))
+end
+
+function _safe_axis_limits(lo, hi)
+	if !(isfinite(lo) && isfinite(hi))
+		return (0.0, 1.0)
+	end
+	if hi > lo
+		padding = 0.05 * (hi - lo)
+		return (lo - padding, hi + padding)
+	end
+	padding = max(0.05 * abs(lo), 1e-8)
+	return (lo - padding, hi + padding)
 end
 
 function _finite_minmax(M)
@@ -301,9 +563,9 @@ function save_figure_1_totals(result, p;
 
 	lS = CairoMakie.lines!(ax_left, t, S_tot; label = "Susceptible", color = :steelblue, linewidth = 2)
 	lR = CairoMakie.lines!(ax_left, t, R_tot; label = "Recovered", color = :seagreen, linewidth = 2)
-	lI = CairoMakie.lines!(ax_right, t, I_tot; label = "Infected", color = :crimson, linewidth = 2)
-	lC = CairoMakie.lines!(ax_right, t, C_tot; label = "Contained", color = :darkorange, linewidth = 2)
-	lV = CairoMakie.lines!(ax_right, t, Vax_flow; label = "Vaccination flow ∫ q·S dk", color = :purple, linewidth = 2)
+	lI = CairoMakie.lines!(ax_right, t, I_tot; label = "Infected", color = :crimson, linewidth = 2, linestyle = :dash)
+	lC = CairoMakie.lines!(ax_right, t, C_tot; label = "Contained", color = :darkorange, linewidth = 2, linestyle = :dash)
+	lV = CairoMakie.lines!(ax_right, t, Vax_flow; label = "Vaccination flow ∫ q·S dk", color = :purple, linewidth = 2, linestyle = :dash)
 	CairoMakie.axislegend(
 		ax_left,
 		[lS, lR, lI, lC, lV],
@@ -1311,6 +1573,216 @@ function save_figure_11bis_relative_dead_flow_surface(result, p;
 	return nothing
 end
 
+function save_figure_12_wealth_gini_over_time(result, p;
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_12_wealth_gini_over_time.pdf",
+)
+	mkpath(outdir)
+
+	t = result.t
+	gini = wealth_gini_over_time(result, p)
+	glo, ghi = extrema(gini)
+
+	fig = CairoMakie.Figure(size = (900, 520))
+	ax = CairoMakie.Axis(
+		fig[1, 1],
+		title = "Wealth Gini index",
+		xlabel = "t",
+		ylabel = "Gini",
+	)
+	CairoMakie.lines!(ax, t, gini; color = :darkgreen, linewidth = 2.5)
+	CairoMakie.ylims!(ax, _safe_axis_limits(glo, ghi)...)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
+function save_figure_12log_wealth_gini_over_time(result, p;
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_12log_wealth_gini_over_time.pdf",
+)
+	mkpath(outdir)
+
+	t = result.t
+	gini = wealth_gini_over_time(result, p)
+	gini_pos = max.(gini, eps(Float64))
+
+	fig = CairoMakie.Figure(size = (900, 520))
+	ax = CairoMakie.Axis(
+		fig[1, 1],
+		title = "Wealth Gini index",
+		xlabel = "t",
+		ylabel = "Gini",
+		yscale = log10,
+	)
+	CairoMakie.lines!(ax, t, gini_pos; color = :darkgreen, linewidth = 2.5)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
+function save_figure_13_wealth_shares_bottom5_top5(result, p;
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_13_wealth_shares_bottom5_top5_over_time.pdf",
+)
+	mkpath(outdir)
+
+	t = result.t
+	bottom5 = wealth_tail_share_over_time(result, p; population_share = 0.05, tail = :bottom)
+	top5 = wealth_tail_share_over_time(result, p; population_share = 0.05, tail = :top)
+	blo, bhi = extrema(bottom5)
+	tlo, thi = extrema(top5)
+
+	fig = CairoMakie.Figure(size = (920, 520))
+	ax_left = CairoMakie.Axis(
+		fig[1, 1],
+		title = "Wealth share held by bottom 5% and top 5%",
+		xlabel = "t",
+		ylabel = "Bottom 5% wealth share",
+	)
+	ax_right = CairoMakie.Axis(
+		fig[1, 1],
+		yaxisposition = :right,
+		ylabel = "Top 5% wealth share",
+		backgroundcolor = :transparent,
+	)
+	CairoMakie.hidexdecorations!(ax_right; grid = false)
+	CairoMakie.hideydecorations!(ax_right; label = false, ticklabels = false, ticks = false, grid = true)
+	CairoMakie.linkxaxes!(ax_left, ax_right)
+
+	lb = CairoMakie.lines!(ax_left, t, bottom5; color = :royalblue, linewidth = 2.5, label = "Bottom 5%")
+	lt = CairoMakie.lines!(ax_right, t, top5; color = :firebrick, linewidth = 2.5, linestyle = :dash, label = "Top 5%")
+	CairoMakie.axislegend(ax_left, [lb, lt], ["Bottom 5%", "Top 5%"])
+	CairoMakie.ylims!(ax_left, _safe_axis_limits(blo, bhi)...)
+	CairoMakie.ylims!(ax_right, _safe_axis_limits(tlo, thi)...)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
+function save_figure_13bis_wealth_shares_bottom50_top10(result, p;
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_13bis_wealth_shares_bottom50_top10_over_time.pdf",
+)
+	mkpath(outdir)
+
+	t = result.t
+	bottom50 = wealth_tail_share_over_time(result, p; population_share = 0.50, tail = :bottom)
+	top10 = wealth_tail_share_over_time(result, p; population_share = 0.10, tail = :top)
+	blo, bhi = extrema(bottom50)
+	tlo, thi = extrema(top10)
+
+	fig = CairoMakie.Figure(size = (920, 520))
+	ax_left = CairoMakie.Axis(
+		fig[1, 1],
+		title = "Wealth share held by bottom 50% and top 10%",
+		xlabel = "t",
+		ylabel = "Bottom 50% wealth share",
+	)
+	ax_right = CairoMakie.Axis(
+		fig[1, 1],
+		yaxisposition = :right,
+		ylabel = "Top 10% wealth share",
+		backgroundcolor = :transparent,
+	)
+	CairoMakie.hidexdecorations!(ax_right; grid = false)
+	CairoMakie.hideydecorations!(ax_right; label = false, ticklabels = false, ticks = false, grid = true)
+	CairoMakie.linkxaxes!(ax_left, ax_right)
+
+	lb = CairoMakie.lines!(ax_left, t, bottom50; color = :royalblue, linewidth = 2.5, label = "Bottom 50%")
+	lt = CairoMakie.lines!(ax_right, t, top10; color = :firebrick, linewidth = 2.5, linestyle = :dash, label = "Top 10%")
+	CairoMakie.axislegend(ax_left, [lb, lt], ["Bottom 50%", "Top 10%"])
+	CairoMakie.ylims!(ax_left, _safe_axis_limits(blo, bhi)...)
+	CairoMakie.ylims!(ax_right, _safe_axis_limits(tlo, thi)...)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
+function save_figure_14_top10_to_bottom50_wealth_share_ratio(result, p;
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_14_top10_to_bottom50_wealth_share_ratio_over_time.pdf",
+)
+	mkpath(outdir)
+
+	t = result.t
+	bottom50 = wealth_tail_share_over_time(result, p; population_share = 0.50, tail = :bottom)
+	top10 = wealth_tail_share_over_time(result, p; population_share = 0.10, tail = :top)
+	ratio = top10 ./ max.(bottom50, eps(Float64))
+	glo, ghi = extrema(ratio)
+
+	fig = CairoMakie.Figure(size = (920, 520))
+	ax = CairoMakie.Axis(
+		fig[1, 1],
+		title = "Ratio of top 10% to bottom 50% wealth shares",
+		xlabel = "t",
+		ylabel = "Top 10% / Bottom 50%",
+	)
+	CairoMakie.lines!(ax, t, ratio; color = :darkmagenta, linewidth = 2.5)
+	CairoMakie.ylims!(ax, _safe_axis_limits(glo, ghi)...)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
+function save_figure_DEBUG1_discrete_vs_interpolated_wealth_distribution(result, p;
+	outdir::AbstractString = "outputs/figures",
+	filename::AbstractString = "figure_DEBUG1_discrete_vs_interpolated_wealth_distribution.pdf",
+	times_to_plot = (0.0, 1.0, 2.0, 3.0, 4.0, 5.0),
+	refine_per_interval::Int = 16,
+	bandwidth = nothing,
+)
+	mkpath(outdir)
+
+	t = result.t
+	Nt = length(t)
+	Nt > 0 || error("result.t is empty")
+	length(result.F) == Nt || error("Inconsistent result lengths: length(t)=$Nt, length(F)=$(length(result.F))")
+
+	k = collect(Float64, p.k)
+	indices = [_nearest_time_index(t, τ) for τ in times_to_plot]
+	ymax = 0.0
+	panel_data = Vector{NamedTuple}(undef, length(indices))
+	for (j, idx) in enumerate(indices)
+		Ft = result.F[idx]
+		mass_density = Ft.ϕSt .+ Ft.ϕIt .+ Ft.ϕCt .+ Ft.ϕRt
+		xfine, yfine = _refine_density_with_pchip(k, mass_density; refine_per_interval = refine_per_interval, bandwidth = bandwidth)
+		ymax = max(ymax, maximum(mass_density), maximum(yfine))
+		panel_data[j] = (idx = idx, mass_density = mass_density, xfine = xfine, yfine = yfine)
+	end
+
+	fig = CairoMakie.Figure(size = (1400, 760))
+	for (panel, data) in enumerate(panel_data)
+		row = 1 + (panel - 1) ÷ 3
+		col = 1 + (panel - 1) % 3
+		τ = t[data.idx]
+		ax = CairoMakie.Axis(
+			fig[row, col],
+			title = "t = $(round(τ, digits = 3))",
+			xlabel = "k",
+			ylabel = "Density",
+		)
+		CairoMakie.scatter!(ax, k, data.mass_density; color = :black, markersize = 7)
+		CairoMakie.lines!(ax, k, data.mass_density; color = (:black, 0.45), linewidth = 1.2)
+		CairoMakie.lines!(ax, data.xfine, data.yfine; color = :crimson, linewidth = 2.0, linestyle = :dash)
+		CairoMakie.ylims!(ax, 0.0, 1.05 * ymax)
+		if panel == 1
+			CairoMakie.axislegend(
+				ax,
+				[
+					CairoMakie.scatter!(ax, [NaN], [NaN]; color = :black, markersize = 7),
+					CairoMakie.lines!(ax, [NaN], [NaN]; color = :crimson, linewidth = 2.0, linestyle = :dash),
+				],
+				["Discrete grid", "Smoothed curve"],
+				position = :rt,
+			)
+		end
+	end
+
+	CairoMakie.Label(
+		fig[0, 1:3],
+		"DEBUG1: discrete wealth distribution and dashed smoothed curve",
+		fontsize = 22,
+	)
+	CairoMakie.save(joinpath(outdir, filename), fig)
+	return nothing
+end
+
 """
 	save_all_figures(result, p; outdir="outputs/figures", contour_lines=6)
 
@@ -1348,7 +1820,7 @@ function save_all_figures(result, p;
 		cut_k_mass_level_top = cut_k_mass_level_top,
 	)
 
-	_total = with_surfaces ? 22 : 12
+	_total = with_surfaces ? 28 : 18
 	_pbar = progress ? ProgressMeter.Progress(_total; desc = "Saving figures") : nothing
 	_tick(label::AbstractString) = (_pbar === nothing ? nothing : ProgressMeter.next!(_pbar; showvalues = [("step", label)]))
 
@@ -1376,6 +1848,18 @@ function save_all_figures(result, p;
 	_tick("figure 10")
 	save_figure_11_relative_dead_flow(result, p; outdir = outdir, contour_lines = contour_lines, k_indices = k_indices)
 	_tick("figure 11")
+	save_figure_12_wealth_gini_over_time(result, p; outdir = outdir)
+	_tick("figure 12")
+	save_figure_12log_wealth_gini_over_time(result, p; outdir = outdir)
+	_tick("figure 12log")
+	save_figure_13_wealth_shares_bottom5_top5(result, p; outdir = outdir)
+	_tick("figure 13")
+	save_figure_13bis_wealth_shares_bottom50_top10(result, p; outdir = outdir)
+	_tick("figure 13bis")
+	save_figure_14_top10_to_bottom50_wealth_share_ratio(result, p; outdir = outdir)
+	_tick("figure 14")
+	save_figure_DEBUG1_discrete_vs_interpolated_wealth_distribution(result, p; outdir = outdir)
+	_tick("figure DEBUG1")
 
 	if with_surfaces
 		save_figure_2bis_distributions_surface(result, p; outdir = outdir, k_indices = k_indices)
@@ -1444,6 +1928,9 @@ function save_solution_csv(result, p;
 		_csv_write_row(io, "T_End", p.T_End)
 		_csv_write_row(io, "DeltaT", p.Δt)
 		_csv_write_row(io, "xi", p.ξ)
+		_csv_write_row(io, "vaccineCostProfile", p.vaccineCostProfile)
+		_csv_write_row(io, "xiKMin", p.ξKMin)
+		_csv_write_row(io, "xiKMax", p.ξKMax)
 		_csv_write_row(io, "method", _maybe_property(result, :method, "quasistatic"))
 		_csv_write_row(io, "converged", _maybe_property(result, :converged, ""))
 		_csv_write_row(io, "iterations", _maybe_property(result, :iterations, ""))
